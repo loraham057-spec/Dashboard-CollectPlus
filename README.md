@@ -1,8 +1,8 @@
-# CollectPlus v0.7.0 — Revue sécurité et durcissement
+# CollectPlus v0.7.1 — Revue sécurité et rafraîchissement du dashboard
 
 CollectPlus est une application de collecte et d’analyse de formulaires terrain (FastAPI, SQLite, SPA/PWA et wrapper Capacitor Android). Cette livraison reprend la version 0.6.2 et ajoute un premier niveau de protections côté API et des tests automatisés. Le design de dashboard existant est conservé.
 
-## Changements v0.7.0
+## Changements v0.7.1\n\n- Refonte de la palette visuelle du tableau de bord : sidebar bleu nuit, surfaces bleu clair, accents turquoise/bleu/violet/orange/vert maîtrisés.\n- KPI et cartes rehaussés (hiérarchie typographique, ombres légères, coins arrondis, états hover).\n- Filtres dashboard harmonisés et mise en page responsive pour écrans intermédiaires et mobiles.\n- Ajustement de la hauteur de la carte et styles de la zone cartographique.\n- Les formulaires et soumissions restent issus des données réelles; aucun questionnaire ni indicateur fictif ajouté.\n- Les fonctionnalités GPS, photo, collecte hors ligne, API, partage public et wrapper Android sont conservés.\n\n## Changements v0.7.0
 
 ### Contrôle d’accès et sécurité HTTP
 - Authentification HTTP Basic obligatoire sur l’interface principale et les routes d’administration/API (formulaires, soumissions, rapports, exports, partage et QR code).
