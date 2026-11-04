@@ -8,10 +8,10 @@
     settings: 'collectplus_settings_v1'
   };
   const state = {
-    forms: [], submissions: [], dashboard: null, map: null, mapMarkers: [], view: 'dashboard', selectedFormId: null,
+    forms: [], submissions: [], dashboard: null, view: 'dashboard', selectedFormId: null,
     builderQuestions: [], builderMode: 'create', selectedSubmissionForm: 'all', builderShortManual: false
   };
-  const pageLabels = {users:'Utilisateurs', dashboard:'Tableau de bord', forms:'Mes enquêtes', collect:'Nouvelle collecte', submissions:'Soumissions', reports:'Rapports & exports', settings:'Paramètres', builder:'Créer une enquête'};
+  const pageLabels = {dashboard:'Vue d’ensemble', forms:'Mes enquêtes', collect:'Nouvelle collecte', submissions:'Soumissions', reports:'Rapports & exports', settings:'Paramètres', builder:'Créer une enquête'};
 
   function readLS(key, fallback) {
     try { const value = localStorage.getItem(key); return value ? JSON.parse(value) : fallback; }
@@ -104,7 +104,7 @@
     const count = queueItems().length;
     $('#queueCount').textContent = count;
     $('#queueCount').style.display = count ? '' : 'none';
-    window.CPDash?.queue(count);
+    $('#metricQueueText').textContent = `${count} en attente sur cet appareil`;
     if ($('#settingsQueueCount')) $('#settingsQueueCount').textContent = count;
   }
 
@@ -132,38 +132,22 @@
     renderForms();
     renderCollectPicker();
     populateSubmissionFilter();
-    populateDashboardFormFilter();
-  }
-  function dashboardQuery() {
-    const form = $('#dashboardForm')?.value || 'all', province = $('#dashboardProvince')?.value || 'all';
-    const params = new URLSearchParams();
-    if ($('#dashStart')?.value) params.set('start_date', $('#dashStart').value);
-    if ($('#dashEnd')?.value) params.set('end_date', $('#dashEnd').value);
-    if (form !== 'all') params.set('form_id', form);
-    if (province !== 'all') params.set('province', province);
-    return `/api/dashboard${params.toString() ? `?${params}` : ''}`;
-  }
-  function populateDashboardFormFilter() {
-    const select = $('#dashboardForm'); if (!select) return;
-    const selected = select.value || 'all';
-    select.innerHTML = '<option value="all">Toutes les enquêtes</option>' + state.forms.map(f => `<option value="${f.id}">${escapeHtml(f.short_title || f.title)}</option>`).join('');
-    if ([...select.options].some(o => o.value === selected)) select.value = selected;
   }
   async function loadDashboard() {
     try {
-      state.dashboard = await api(dashboardQuery());
+      state.dashboard = await api('/api/dashboard');
       renderDashboard(state.dashboard);
-      
+      $('#lastRefreshLabel').textContent = `Actualisé à ${new Intl.DateTimeFormat('fr-FR', {hour:'2-digit', minute:'2-digit'}).format(new Date())}`;
     } catch {
       const cached = readLS(LS.submissions, []);
       const forms = state.forms;
       state.dashboard = {
         form_count: forms.length, submission_count: cached.length,
-        status_counts: {'Ouvert':0,'En cours':0,'Résolu':0}, disease_counts:{}, monthly:[], daily:[], by_province:[], by_zone:[], forms_table:[], users:{}, points:[],
+        status_counts: {'Ouvert':0,'En cours':0,'Résolu':0}, disease_counts:{},
         by_form: forms.map(f => ({label:f.short_title || f.title, value:cached.filter(s => s.form_id === f.id).length})), recent: cached.slice(0,7)
       };
       renderDashboard(state.dashboard);
-      
+      $('#lastRefreshLabel').textContent = 'Données en cache (mode hors ligne)';
     }
   }
   async function loadSubmissions() {
@@ -175,6 +159,7 @@
     }
     renderSubmissions();
     renderReportSummary();
+    if (state.view === 'dashboard' && state.dashboard) renderDashboard(state.dashboard);
   }
   async function refreshAll() {
     await loadForms();
@@ -190,7 +175,6 @@
     $('#currentPageLabel').textContent = pageLabels[view] || 'CollectPlus';
     $('#sidebar').classList.remove('mobile-open');
     if (view === 'dashboard') loadDashboard();
-    if (view === 'users') window.CPDash?.users();
     if (view === 'forms') renderForms();
     if (view === 'collect') renderCollectPicker();
     if (view === 'submissions') loadSubmissions();
@@ -210,7 +194,92 @@
   }
   function closeAbout() { $('#aboutModal').classList.add('hidden'); }
 
-  function renderDashboard(data) { window.CPDash?.render(data); updateQueueIndicators(); }
+  let cpMapInstance = null;
+  let cpMapMarkers = [];
+  const cpColors = ['#0878f9','#08b982','#ff9d25','#f35e66','#8a5cf6','#12b8c8','#a3b2c4'];
+  function cpEscape(s){return escapeHtml(String(s ?? ''));}
+  function cpGetGps(record){
+    const d=record?.data||{};
+    const candidates=[d.gps,d.geolocation,d.location,d.coordonnees_gps,d.coordinates,d.position,...Object.values(d)];
+    let lat=d.latitude??d.lat??d.latitud, lon=d.longitude??d.lon??d.lng??d.longitud;
+    for(const c of candidates){
+      if(Array.isArray(c)&&c.length>=2){
+        const a=Number(c[0]),b=Number(c[1]); if(Number.isFinite(a)&&Number.isFinite(b)){if(Math.abs(a)<=90&&Math.abs(b)<=180){lat=a;lon=b;}else{lat=b;lon=a;}break;}
+      }
+      if(typeof c==='string'){const m=c.match(/(-?\d{1,2}\.\d+)\s*[,; ]\s*(-?\d{1,3}\.\d+)/);if(m){lat=Number(m[1]);lon=Number(m[2]);break;}}
+      if(c&&typeof c==='object'){lat=c.latitude??c.lat??lat;lon=c.longitude??c.lng??c.lon??lon;}
+    }
+    lat=Number(lat);lon=Number(lon);return Number.isFinite(lat)&&Number.isFinite(lon)&&Math.abs(lat)<=90&&Math.abs(lon)<=180?[lat,lon]:null;
+  }
+  function cpDate(record){const d=new Date(record?.submitted_at||record?.date||0);return Number.isFinite(d.getTime())?d:null;}
+  function cpFilteredRows(){
+    const period=$('#cpPeriodFilter')?.value||'30', province=$('#cpProvinceFilter')?.value||'all', form=$('#cpFormFilter')?.value||'all';
+    let rows=Array.isArray(state.submissions)?state.submissions:[];
+    if(form!=='all')rows=rows.filter(r=>String(r.form_id)===String(form));
+    if(province!=='all')rows=rows.filter(r=>String((r.data||{}).province||'')===province);
+    if(period!=='all'){const days=Number(period),since=new Date();since.setDate(since.getDate()-days);rows=rows.filter(r=>{const d=cpDate(r);return d&&d>=since;});}
+    return rows;
+  }
+  function cpPopulateFilters(){
+    const prov=$('#cpProvinceFilter'), form=$('#cpFormFilter');if(!prov||!form)return;
+    const oldProv=prov.value,oldForm=form.value;
+    const provinces=[...new Set((state.submissions||[]).map(r=>(r.data||{}).province).filter(x=>typeof x==='string'&&x.trim()))].sort((a,b)=>a.localeCompare(b,'fr'));
+    prov.innerHTML='<option value="all">Toutes les provinces</option>'+provinces.map(x=>`<option value="${cpEscape(x)}">${cpEscape(x)}</option>`).join('');
+    form.innerHTML='<option value="all">Tous les formulaires</option>'+state.forms.map(f=>`<option value="${cpEscape(f.id)}">${cpEscape(f.short_title||f.title)}</option>`).join('');
+    if([...prov.options].some(o=>o.value===oldProv))prov.value=oldProv;if([...form.options].some(o=>o.value===oldForm))form.value=oldForm;
+  }
+  function cpRenderTrend(rows){
+    const root=$('#cpTrendChart');if(!root)return;
+    const buckets=new Map();const gran=$('#cpTrendGranularity')?.value||'day';
+    rows.forEach(r=>{const d=cpDate(r);if(!d)return;let key;if(gran==='month')key=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');else if(gran==='week'){const w=new Date(d);w.setDate(w.getDate()-((w.getDay()+6)%7));key=w.toISOString().slice(0,10);}else key=d.toISOString().slice(0,10);buckets.set(key,(buckets.get(key)||0)+1);});
+    let arr=[...buckets.entries()].sort((a,b)=>a[0].localeCompare(b[0]));if(arr.length>14)arr=arr.slice(-14);
+    if(!arr.length){root.innerHTML='<div class="cp-empty-mini">Le graphique se construira après les premières soumissions.<br>Les valeurs ne sont pas simulées.</div>';return;}
+    const W=600,H=225,L=34,R=12,T=14,B=32,iw=W-L-R,ih=H-T-B,max=Math.max(1,...arr.map(x=>x[1]));const points=arr.map((x,i)=>`${L+(arr.length===1?iw/2:i*iw/(arr.length-1))},${T+ih-(x[1]/max)*ih}`).join(' ');
+    const grids=[0,.25,.5,.75,1].map(v=>{const y=T+ih-v*ih;return `<line x1="${L}" y1="${y}" x2="${W-R}" y2="${y}" stroke="#e8eff8"/><text x="${L-7}" y="${y+3}" text-anchor="end" fill="#8293ad" font-size="10">${Math.round(max*v)}</text>`}).join('');
+    const labels=arr.map((x,i)=>{if(arr.length>8&&i%2) return '';const xx=L+(arr.length===1?iw/2:i*iw/(arr.length-1));return `<text x="${xx}" y="${H-8}" text-anchor="middle" fill="#8494ad" font-size="9">${cpEscape(x[0].slice(5))}</text>`}).join('');
+    root.innerHTML=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Évolution des soumissions">${grids}<polyline points="${points}" fill="none" stroke="#0878f9" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>${arr.map((x,i)=>{const xx=L+(arr.length===1?iw/2:i*iw/(arr.length-1)),yy=T+ih-(x[1]/max)*ih;return `<circle cx="${xx}" cy="${yy}" r="3.5" fill="#fff" stroke="#0878f9" stroke-width="2"><title>${cpEscape(x[0])}: ${x[1]}</title></circle>`}).join('')}${labels}</svg>`;
+  }
+  function cpRenderMap(rows){
+    const root=$('#cpCollectMap');if(!root)return;
+    const points=rows.map(r=>({record:r,coords:cpGetGps(r)})).filter(x=>x.coords);
+    $('#cpMapPointCount').textContent=`${points.length} ${points.length===1?'point':'points'}`;
+    if(!window.L){root.innerHTML='<div class="cp-map-empty">Bibliothèque cartographique indisponible. Vérifiez la connexion Internet.</div>';return;}
+    if(!cpMapInstance){root.innerHTML='';cpMapInstance=L.map(root,{zoomControl:true}).setView([-4.5,23.5],4);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(cpMapInstance);}
+    cpMapMarkers.forEach(m=>cpMapInstance.removeLayer(m));cpMapMarkers=[];
+    points.forEach(({record,coords})=>{const title=record.short_title||record.form_title||'Collecte',ref=findPrimaryValue(record),place=[record.data?.province,record.data?.zone_sante].filter(Boolean).join(' · ')||'Localisation';const marker=L.circleMarker(coords,{radius:7,fillColor:'#0799a8',color:'#fff',weight:2,fillOpacity:.95}).addTo(cpMapInstance);marker.bindPopup(`<strong>${cpEscape(title)}</strong><br>${cpEscape(ref)}<br>${cpEscape(place)}<br>${cpEscape(friendlyDate(record.submitted_at))}`);cpMapMarkers.push(marker);});
+    if(points.length){const bounds=L.latLngBounds(points.map(p=>p.coords));cpMapInstance.fitBounds(bounds,{padding:[22,22],maxZoom:12});}else cpMapInstance.setView([-4.5,23.5],4);
+    setTimeout(()=>cpMapInstance.invalidateSize(),100);
+  }
+  function cpRenderRecent(rows){
+    const root=$('#cpRecentList');if(!root)return;
+    if(!rows.length){root.innerHTML='<div class="cp-empty-mini">Aucune soumission reçue.<br>Les dernières réponses seront listées ici.</div>';return;}
+    root.innerHTML=rows.slice().sort((a,b)=>(b.submitted_at||'').localeCompare(a.submitted_at||'')).slice(0,6).map(r=>`<div class="cp-recent-row"><span class="cp-recent-icon">▤</span><div><strong>${cpEscape(r.short_title||r.form_title||'Enquête')}</strong><small>${cpEscape([r.data?.province,r.data?.zone_sante].filter(Boolean).join(' · ')||findPrimaryValue(r))} · ${cpEscape(friendlyDate(r.submitted_at))}</small></div><span class="cp-recent-state">✓</span></div>`).join('');
+  }
+  function cpRenderDistribution(rows){
+    const root=$('#cpDistribution');if(!root)return;
+    const counts=new Map();rows.forEach(r=>{const name=r.short_title||r.form_title||'Enquête';counts.set(name,(counts.get(name)||0)+1);});const arr=[...counts.entries()].sort((a,b)=>b[1]-a[1]).slice(0,6),total=rows.length;
+    if(!arr.length){root.innerHTML='<div class="cp-empty-mini">Aucune donnée à répartir.<br>Le graphique sera alimenté automatiquement.</div>';return;}
+    let offset=0;const segments=arr.map((x,i)=>{const val=x[1]/total*100,start=offset;offset+=val;return `${cpColors[i%cpColors.length]} ${start}% ${offset}%`;}).join(',');
+    root.innerHTML=`<div class="cp-donut-wrap"><svg class="cp-donut" viewBox="0 0 100 100"><circle cx="50" cy="50" r="34" fill="none" stroke="#edf2fa" stroke-width="20"/><circle cx="50" cy="50" r="34" fill="none" stroke="transparent" stroke-width="20"/><foreignObject x="0" y="0" width="100" height="100"><div xmlns="http://www.w3.org/1999/xhtml" style="height:100%;display:grid;place-items:center"><div style="width:76px;height:76px;border-radius:50%;background:conic-gradient(${segments});display:grid;place-items:center"><div style="width:52px;height:52px;background:white;border-radius:50%;display:grid;place-items:center;color:#10234a;font-size:12px;font-weight:800">${total}</div></div></div></foreignObject></svg><div class="cp-donut-legend">${arr.map((x,i)=>`<div class="cp-donut-line"><i style="background:${cpColors[i%cpColors.length]}"></i><span title="${cpEscape(x[0])}">${cpEscape(x[0])}</span><strong>${Math.round(x[1]/total*100)}% (${x[1]})</strong></div>`).join('')}</div></div>`;
+  }
+  function cpRenderQuality(rows){
+    const root=$('#cpQuality');if(!root)return;const gps=rows.filter(r=>cpGetGps(r)).length,rate=rows.length?Math.round(gps/rows.length*100):0;
+    root.innerHTML=`<div class="cp-quality-ring" style="--quality:${rate*3.6}deg"><div>${rate}%<small>Avec GPS</small></div></div><div class="cp-quality-note">${gps} soumission(s) géolocalisée(s) sur ${rows.length}<br>${rows.length?'La couverture GPS est calculée à partir des réponses.':'La qualité s’affichera dès la collecte.'}</div>`;
+  }
+  function renderDashboard(data){
+    cpPopulateFilters();const rows=cpFilteredRows();const forms=state.forms||[];const gps=rows.filter(r=>cpGetGps(r)).length;const provinces=new Set(rows.map(r=>r.data?.province).filter(Boolean));
+    $('#cpKpiForms').textContent=forms.length;$('#cpKpiFormsNote').textContent=`${forms.length} enquête(s) dans votre espace`;
+    $('#cpKpiSubmissions').textContent=rows.length.toLocaleString('fr-FR');$('#cpKpiSubmissionsNote').textContent='Réponses sur la période sélectionnée';
+    $('#cpKpiGps').textContent=gps.toLocaleString('fr-FR');$('#cpKpiGpsNote').textContent=`${rows.length?Math.round(gps/rows.length*100):0}% des soumissions`;
+    $('#cpKpiProvinces').textContent=provinces.size;$('#cpKpiProvincesNote').textContent='Provinces identifiées dans les réponses';
+    $('#cpKpiQueue').textContent=queueItems().length;
+    cpRenderTrend(rows);cpRenderMap(rows);cpRenderRecent(rows);cpRenderDistribution(rows);cpRenderQuality(rows);updateQueueIndicators();
+  }
+  function bindDashboardFilters(){
+    ['cpPeriodFilter','cpProvinceFilter','cpFormFilter','cpTrendGranularity'].forEach(id=>{const el=$('#'+id);if(el)el.addEventListener('change',()=>renderDashboard(state.dashboard||{}));});
+    $('#cpRefreshDashboard')?.addEventListener('click',()=>{loadDashboard();loadSubmissions();});
+    $('#cpMapReset')?.addEventListener('click',()=>{if(cpMapInstance)cpMapInstance.setView([-4.5,23.5],4);});
+  }
   function renderStatusChart(statuses) {
     const configs = [
       {key:'Ouvert',label:'Ouverts',cls:'fill-open'},
@@ -230,30 +299,6 @@
     const max = Math.max(1, ...visible.map(x => Number(x.value || 0)));
     root.innerHTML = visible.map(x => `<div class="bar-row"><div class="bar-label" title="${escapeHtml(x.label)}">${escapeHtml(x.label)}</div><div class="bar-track"><div class="bar-fill" style="width:${x.value ? Math.max(2, x.value/max*100) : 0}%"></div></div><div class="bar-value">${x.value}</div></div>`).join('');
   }
-  function renderSubmissionTrend(items) {
-    const root = $('#submissionTrend');
-    if (!items.length) { root.innerHTML = '<div class="chart-empty">Aucune donnée dans la période sélectionnée.</div>'; return; }
-    const values = items.map(x => Number(x.value || 0)); const max = Math.max(1, ...values);
-    const width = 640, height = 180, pad = 24;
-    const pts = values.map((v,i) => `${pad + (values.length===1 ? 0 : i*(width-2*pad)/(values.length-1))},${height-pad-(v/max)*(height-2*pad)}`).join(' ');
-    const area = `${pad},${height-pad} ${pts} ${width-pad},${height-pad}`;
-    root.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Tendance des soumissions" class="trend-svg"><defs><linearGradient id="trendFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#167d91" stop-opacity=".24"/><stop offset="100%" stop-color="#167d91" stop-opacity=".02"/></linearGradient></defs>${[.25,.5,.75,1].map(y=>`<line x1="${pad}" x2="${width-pad}" y1="${height-pad-y*(height-2*pad)}" y2="${height-pad-y*(height-2*pad)}" stroke="#e7edf1" stroke-dasharray="3 4"/>`).join('')}<polygon points="${area}" fill="url(#trendFill)"/><polyline points="${pts}" fill="none" stroke="#167d91" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>${values.map((v,i)=>{const x=pad+(values.length===1?0:i*(width-2*pad)/(values.length-1));const y=height-pad-(v/max)*(height-2*pad);return `<circle cx="${x}" cy="${y}" r="3.5" fill="#fff" stroke="#167d91" stroke-width="2"><title>${escapeHtml(items[i].label)} : ${v}</title></circle>`}).join('')}</svg><div class="trend-labels">${items.map(x=>`<span>${escapeHtml(x.label.slice(5) || x.label)}</span>`).join('')}</div>`;
-  }
-  function renderCollectMap(points) {
-    const root = $('#collectMap'); const count = $('#mapPointCount');
-    count.textContent = `${points.length} point${points.length===1?'':'s'} GPS`;
-    if (!window.L) { root.innerHTML = '<div class="map-empty">Carte en attente de la bibliothèque cartographique.</div>'; return; }
-    if (!state.map) { root.innerHTML=''; state.map = L.map(root, {zoomControl:true}).setView([-4.5,23.5], 4); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:18,attribution:'© OpenStreetMap'}).addTo(state.map); }
-    state.mapMarkers.forEach(m=>state.map.removeLayer(m)); state.mapMarkers=[];
-    points.forEach(point=>{ const marker=L.circleMarker([point.lat,point.lon],{radius:7,color:'#fff',weight:2,fillColor:'#147d91',fillOpacity:.95}).addTo(state.map); marker.bindPopup(`<strong>${escapeHtml(point.title)}</strong><br>${escapeHtml(point.primary)}<br>${escapeHtml(point.province||'Province non renseignée')}<br>${escapeHtml(friendlyDate(point.submitted_at))}`);state.mapMarkers.push(marker); });
-    if(points.length){const group=L.featureGroup(state.mapMarkers);state.map.fitBounds(group.getBounds().pad(.2),{maxZoom:10});} else state.map.setView([-4.5,23.5],4);
-    setTimeout(()=>state.map.invalidateSize(),120);
-  }
-  $('#dashboardPeriod')?.addEventListener('change', loadDashboard);
-  $('#dashboardForm')?.addEventListener('change', loadDashboard);
-  $('#dashboardProvince')?.addEventListener('change', loadDashboard);
-  $('#dashboardRefresh')?.addEventListener('click', loadDashboard);
-
   function getStatus(data) {
     const status = data?.statut_incident || data?.status || '';
     if (status === 'Ouvert') return ['Ouvert','open'];
@@ -281,36 +326,23 @@
     $('#formCountLabel').textContent = `${forms.length} enquête${forms.length === 1 ? '' : 's'}`;
     $('#formsGrid').innerHTML = forms.map(form => `
       <article class="survey-card">
-        <div class="survey-card-top"><div class="survey-card-icon">▤</div><span class="survey-status">${form.public_enabled ? 'LIEN PUBLIC ACTIF' : 'DISPONIBLE'}</span></div>
+        <div class="survey-card-top"><div class="survey-card-icon">▤</div><span class="survey-status">DISPONIBLE</span></div>
         <h3>${escapeHtml(form.title)}</h3><p>${escapeHtml(form.description || 'Formulaire prêt à être utilisé pour la collecte de données.')}</p>
-        <div class="survey-card-bottom"><span class="survey-meta">${countQuestions(form)} questions · ${form.is_system ? 'Modèle intégré' : 'Personnalisé'}</span><div class="survey-actions"><button class="mini-action" data-preview-form="${form.id}">Aperçu</button><button class="mini-action primary-mini" data-start-form="${form.id}">Lancer</button><button class="mini-action share-mini" data-share-form="${form.id}">${form.public_enabled ? 'Copier lien' : 'Partager sans compte'}</button>${form.public_enabled ? `<button class="mini-action close-share-mini" data-close-share="${form.id}">Fermer lien</button>` : ''}${form.is_system ? '' : `<button class="mini-action delete-mini" data-delete-form="${form.id}" title="Supprimer">×</button>`}</div></div>
+        <div class="survey-card-bottom"><span class="survey-meta">${countQuestions(form)} questions · ${form.is_system ? 'Modèle intégré' : 'Personnalisé'}</span><div class="survey-actions"><button class="mini-action" data-preview-form="${form.id}">Aperçu</button><button class="mini-action primary-mini" data-start-form="${form.id}">Lancer</button><button class="mini-action share-mini" data-share-form="${form.id}">↗ Partager</button>${form.is_system ? '' : `<button class="mini-action delete-mini" data-delete-form="${form.id}" title="Supprimer">×</button>`}</div></div>
       </article>`).join('');
     $('#formsEmpty').classList.toggle('hidden', forms.length > 0);
     $$('[data-start-form]').forEach(btn => btn.addEventListener('click', () => { state.selectedFormId = Number(btn.dataset.startForm); navigate('collect'); renderCollectPicker(); renderCollectForm(state.selectedFormId); }));
     $$('[data-preview-form]').forEach(btn => btn.addEventListener('click', () => previewForm(Number(btn.dataset.previewForm))));
     $$('[data-delete-form]').forEach(btn => btn.addEventListener('click', () => deleteForm(Number(btn.dataset.deleteForm))));
-    $$('[data-share-form]').forEach(btn => btn.addEventListener('click', () => shareForm(Number(btn.dataset.shareForm))));
-    $$('[data-close-share]').forEach(btn => btn.addEventListener('click', () => closePublicShare(Number(btn.dataset.closeShare))));
-  }
-  async function shareForm(formId) {
-    try {
-      const result = await api(`/api/forms/${formId}/publish`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:true})});
-      const link = new URL(result.public_url, window.location.origin).href;
-      showShareDialog(link, state.forms.find(f => Number(f.id) === Number(formId))?.title || 'Formulaire public');
-      try { await navigator.clipboard.writeText(link); toast('Lien public copié', 'success', 'Toute personne ayant ce lien peut répondre sans compte.'); } catch {}
-      await loadForms();
-    } catch (error) { toast('Impossible de publier le lien', 'error', error.message); }
-  }
-  function showShareDialog(link, title) {
-    let modal = $('#shareDialog');
-    if (!modal) { modal = document.createElement('div'); modal.id='shareDialog'; modal.className='modal-backdrop'; modal.innerHTML='<div class="modal-card share-dialog-card"><div class="modal-header"><div><div class="eyebrow">PARTAGE PARTICIPANT</div><h2 id="shareDialogTitle">Lien public</h2></div><button class="icon-button" id="shareDialogClose" aria-label="Fermer">×</button></div><div class="share-dialog-content"><p>Les participants peuvent ouvrir ce lien et envoyer une réponse <strong>sans créer de compte CollectPlus</strong>.</p><label class="share-link-label">Lien du formulaire<input id="shareLinkInput" readonly></label><div class="share-dialog-actions"><button class="button button-primary" id="shareCopyButton">Copier le lien</button><button class="button button-secondary" id="shareNativeButton">Partager…</button></div><div class="qr-wrap"><div id="shareQr"></div><span>QR code à scanner sur téléphone</span></div><p class="share-caution">Le lien est public et transmissible. Fermez-le depuis la fiche enquête lorsque la collecte est terminée.</p></div></div>'; document.body.appendChild(modal); $('#shareDialogClose').addEventListener('click',()=>modal.remove()); modal.addEventListener('click',e=>{if(e.target===modal)modal.remove()}); $('#shareCopyButton').addEventListener('click',async()=>{try{await navigator.clipboard.writeText($('#shareLinkInput').value);toast('Lien copié')}catch{$('#shareLinkInput').select();document.execCommand('copy');toast('Lien copié')}}); $('#shareNativeButton').addEventListener('click',async()=>{if(navigator.share){try{await navigator.share({title:$('#shareDialogTitle').textContent,url:$('#shareLinkInput').value})}catch{}}else{try{await navigator.clipboard.writeText($('#shareLinkInput').value);toast('Lien copié')}catch{}}}); }
-    $('#shareDialogTitle').textContent=title; $('#shareLinkInput').value=link; $('#shareQr').innerHTML='';
-    if (window.QRCode) new QRCode($('#shareQr'),{text:link,width:168,height:168,colorDark:'#142b4a',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.M}); else $('#shareQr').innerHTML='<span class="hint-badge">QR code indisponible hors connexion</span>';
-  }
-  async function closePublicShare(formId) {
-    if (!confirm('Fermer ce lien public ? Les participants ne pourront plus soumettre de réponse avec ce lien.')) return;
-    try { await api(`/api/forms/${formId}/publish`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:false})}); toast('Lien public fermé'); await loadForms(); }
-    catch (error) { toast('Erreur lors de la fermeture', 'error', error.message); }
+    $$('[data-share-form]').forEach(btn => btn.addEventListener('click', async () => {
+      const id=Number(btn.dataset.shareForm);btn.disabled=true;btn.textContent='Création…';
+      try{const result=await api(`/api/forms/${id}/share`,{method:'POST'});const url=result.url;
+        try{await navigator.clipboard.writeText(url);toast('Lien public créé et copié','success',url);}catch{window.prompt('Copiez le lien public du formulaire :',url);}
+        const qr=`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(url)}`;
+        const popup=window.open(qr,'_blank','noopener');if(!popup)toast('Lien prêt. Autorisez les popups pour ouvrir le QR code.','info');
+      }catch(error){toast('Impossible de créer le lien public','error',error.message||'Réessayez.');}
+      finally{btn.disabled=false;btn.textContent='↗ Partager';}
+    }));
   }
   function countQuestions(form) { return (form.sections || []).reduce((sum, section) => sum + (section.questions || []).length, 0); }
   $('#formSearch').addEventListener('input', renderForms);
@@ -342,8 +374,6 @@
     }
     if (type === 'select' || type === 'select_one') {
       control = `<select class="question-control" name="${name}"${required}><option value="">Sélectionner…</option>${(q.options || []).map(option => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`).join('')}</select>`;
-    } else if (type === 'geopoint' || ['gps','location'].includes(String(q.name).toLowerCase())) {
-      control = `<div class="gps-field"><input class="question-control" type="text" name="${name}"${required} placeholder="latitude longitude altitude précision"><button type="button" class="button button-secondary small-button" data-capture-gps="${name}">⌖ GPS</button></div>`;
     } else if (type === 'multiselect' || type === 'select_multiple') {
       control = `<div class="choice-list">${(q.options || []).map((option, i) => `<label class="choice-option"><input type="checkbox" name="${name}" value="${escapeHtml(option)}"><span>${escapeHtml(option)}</span></label>`).join('')}</div>`;
       if (q.required) control += `<input type="text" class="multi-required-proxy" name="${name}__required" required tabindex="-1" aria-hidden="true" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none">`;
@@ -364,12 +394,6 @@
       <div class="collect-form-footer"><div class="form-footer-note">* Champ obligatoire · Enregistrement local si hors ligne</div><div class="form-footer-buttons"><button class="button button-secondary" type="button" id="resetSurveyButton">Effacer</button><button class="button button-primary" type="submit">Enregistrer la réponse <span>→</span></button></div></div>
     </form>`;
     const surveyForm = $('#activeSurveyForm');
-    $$('[data-capture-gps]', surveyForm).forEach(button => button.addEventListener('click', () => {
-      const field = surveyForm.elements.namedItem(button.dataset.captureGps);
-      if (!navigator.geolocation) { toast('GPS indisponible sur ce navigateur', 'error'); return; }
-      button.disabled = true; button.textContent = 'Recherche…';
-      navigator.geolocation.getCurrentPosition(pos => { field.value = [pos.coords.latitude,pos.coords.longitude,pos.coords.altitude ?? '',pos.coords.accuracy].join(' '); button.disabled=false;button.textContent='✓ GPS';updateFormProgress(); }, () => { toast('Autorisez la localisation puis réessayez', 'error');button.disabled=false;button.textContent='⌖ GPS'; }, {enableHighAccuracy:true,timeout:20000});
-    }));
     $$('.question-field input, .question-field select, .question-field textarea', surveyForm).forEach(input => {
       if (input.type === 'date' && input.name === 'date_declaration' && !input.value) input.value = new Date().toISOString().slice(0,10);
       input.addEventListener('input', updateFormProgress);
@@ -659,7 +683,7 @@
 
   // Export flows
   function goExport(format, formId = null) { const param = formId ? `?form_id=${encodeURIComponent(formId)}` : ''; window.location.href = apiUrl(`/api/export/${format}${param}`); }
-  
+  $('#dashboardExport').addEventListener('click', () => { navigate('reports'); });
   $('#submissionCsv').addEventListener('click', () => goExport('csv', selectedExportForm()));
   $('#submissionXlsx').addEventListener('click', () => goExport('xlsx', selectedExportForm()));
   $('#reportCsv').addEventListener('click', () => goExport('csv'));
@@ -693,6 +717,7 @@
   async function init() {
     applySettings();
     bindNavigation();
+    bindDashboardFilters();
     setConnectionStatus();
     updateQueueIndicators();
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/service-worker.js').catch(() => {});
@@ -702,6 +727,5 @@
     await refreshAll();
     renderReportSummary();
   }
-  window.CP = {state, api, apiUrl, navigate, toast, escapeHtml, friendlyDate, getStatus, findPrimaryValue, showSubmission, loadForms, loadDashboard, refreshAll, shareForm, closePublicShare, openBuilder, queueItems, readLS, LS};
   init();
 })();

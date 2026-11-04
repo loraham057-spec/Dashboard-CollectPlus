@@ -63,31 +63,7 @@ jobs:
           with urlopen('http://127.0.0.1:8000/static/default-forms.json') as response:
               bundled_forms = json.load(response)
           assert any(f.get('key') == 'mapepi-incidents-v1' for f in bundled_forms)
-          from urllib.request import Request
-          form_id = forms[0]['id']
-          publish_req = Request(f'http://127.0.0.1:8000/api/forms/{form_id}/publish', data=json.dumps({'enabled': True}).encode(), headers={'Content-Type':'application/json'}, method='POST')
-          with urlopen(publish_req) as response: published = json.load(response)
-          token = published['public_token']
-          with urlopen(f'http://127.0.0.1:8000/p/{token}') as response: assert response.status == 200
-          with urlopen(f'http://127.0.0.1:8000/api/public/forms/{token}') as response: public_form = json.load(response)
-          answers = {'latitude': -4.3, 'longitude': 15.3}
-          for section in public_form.get('sections', []):
-              for question in section.get('questions', []):
-                  if not question.get('required') or question.get('type') == 'note': continue
-                  qtype = question.get('type', 'text'); name = question['name']; options = question.get('options') or []
-                  if qtype in ('select','select_one'): answers[name] = options[0] if options else 'Test'
-                  elif qtype in ('multiselect','select_multiple'): answers[name] = [options[0]] if options else ['Test']
-                  elif qtype == 'number': answers[name] = 1
-                  elif qtype == 'geopoint': answers[name] = '-4.3 15.3 0 5'
-                  elif qtype == 'date': answers[name] = '2026-11-03'
-                  else: answers[name] = 'CI test response'
-          submit_req = Request(f'http://127.0.0.1:8000/api/public/forms/{token}/submissions', data=json.dumps({'data':answers}).encode(), headers={'Content-Type':'application/json'}, method='POST')
-          with urlopen(submit_req) as response: assert json.load(response).get('ok') is True
-          with urlopen('http://127.0.0.1:8000/api/dashboard') as response: dashboard = json.load(response)
-          assert dashboard['submission_count'] >= 1 and len(dashboard['points']) >= 1, dashboard
-          disable_req = Request(f'http://127.0.0.1:8000/api/forms/{form_id}/publish', data=json.dumps({'enabled': False}).encode(), headers={'Content-Type':'application/json'}, method='POST')
-          with urlopen(disable_req) as response: assert json.load(response)['public_enabled'] is False
-          print('CollectPlus OK : interface, API, MAPEPI, partage anonyme, soumission GPS, dashboard et fermeture de lien.')
+          print('CollectPlus OK : interface, API, formulaire MAPEPI et secours hors ligne disponibles.')
           PY
 
       - name: Construire l'image Docker

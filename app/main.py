@@ -4,15 +4,16 @@ import csv
 import io
 import json
 import os
+import secrets
 import sqlite3
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse, HTMLResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from openpyxl import Workbook, load_workbook
 from pydantic import BaseModel, Field
@@ -26,103 +27,14 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(
     title="CollectPlus",
-    version="0.5.0",
-    description="Plateforme de collecte mobile, partage public anonyme, cartographie GPS et tableaux de bord dynamiques.",
+    version="0.6.0",
+    description="Plateforme de collecte mobile et de visualisation des enquêtes.",
 )
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
-MAPEPI_FORM: dict[str, Any] = {
-    "key": "mapepi-incidents-v1",
-    "title": "Fiche d’enregistrement et de suivi d’incident",
-    "short_title": "Incidents MAPEPI",
-    "description": "Déclaration, suivi et clôture des incidents liés au transport et à la traçabilité des échantillons biologiques.",
-    "version": 1,
-    "sections": [
-        {
-            "title": "1. Identification de l’incident",
-            "description": "Renseignez les informations disponibles au moment de la déclaration.",
-            "questions": [
-                {"name": "reference_incident", "label": "Référence de l’incident", "type": "text", "required": True, "placeholder": "Ex. INC-HL-2026-001"},
-                {"name": "numero_epid", "label": "N° EPID", "type": "text", "required": False},
-                {"name": "date_detection", "label": "Date de détection", "type": "date", "required": True},
-                {"name": "heure_detection", "label": "Heure de détection", "type": "time"},
-                {"name": "date_declaration", "label": "Date de déclaration", "type": "date", "required": True},
-                {"name": "heure_declaration", "label": "Heure de déclaration", "type": "time"},
-                {"name": "province", "label": "Province", "type": "select", "required": True, "options": ["Bas-Uele","Équateur","Haut-Katanga","Haut-Lomami","Haut-Uele","Ituri","Kasaï","Kasaï Central","Kasaï Oriental","Kinshasa","Kongo Central","Kwango","Kwilu","Lomami","Lualaba","Mai-Ndombe","Maniema","Mongala","Nord-Kivu","Nord-Ubangi","Sankuru","Sud-Kivu","Sud-Ubangi","Tanganyika","Tshopo","Tshuapa","Autre"]},
-                {"name": "zone_sante", "label": "Zone de santé", "type": "text", "required": True},
-                {"name": "site_prelevement", "label": "Site de prélèvement / aire de santé / structure", "type": "text", "required": True},
-                {"name": "destination", "label": "Point de destination / laboratoire", "type": "text", "required": True},
-                {"name": "declare_par", "label": "Déclaré par (nom et fonction)", "type": "text", "required": True},
-                {"name": "telephone", "label": "Téléphone / contact", "type": "phone"},
-                {"name": "organisation", "label": "Organisation / service", "type": "text"},
-            ],
-        },
-        {
-            "title": "2. Étape du circuit concernée",
-            "description": "Plusieurs réponses sont possibles.",
-            "questions": [
-                {"name": "etapes_circuit", "label": "Étape(s) du circuit", "type": "multiselect", "required": True, "options": [
-                    "Transport Communauté/AS vers le BCZ", "Transport BCZ vers l’antenne PEV", "Transport Communauté/AS vers l’antenne PEV", "Transport Antenne PEV vers Chef-Lieu Province ou point de sortie", "Transport Chef-Lieu Province vers Labo", "Réception au BCZ", "Réception à l’antenne PEV", "Réception au laboratoire d’analyse", "Autre"
-                ]},
-                {"name": "autre_etape", "label": "Autre étape (préciser)", "type": "text"},
-            ],
-        },
-        {
-            "title": "3. Type et niveau de l’incident",
-            "description": "Sélectionnez tous les motifs constatés.",
-            "questions": [
-                {"name": "motifs_incident", "label": "Motif(s) de l’incident", "type": "multiselect", "required": True, "options": [
-                    "Retard dans la collecte ou l’acheminement de l’échantillon", "Doublon du numéro EPID", "Échantillon mal étiqueté ou non étiqueté", "Échantillon prélevé dans un contenant inapproprié", "Réception d’un seul échantillon de selles au lieu des deux requis (PFA)", "Échantillon non localisé ou perte de traçabilité", "Fiche papier incomplète ou mal renseignée", "Échantillon reçu sans fiche d’accompagnement ou de notification", "Données DHIS2 manquantes ou erronées", "Absence de réseau ou difficulté de synchronisation des données", "Discordance entre la fiche papier et les données du Tracker DHIS2", "Problème de conditionnement ou d’emballage de l’échantillon", "Fuite ou déversement de l’échantillon", "Volume d’échantillon insuffisant", "Non-respect de la chaîne du froid pendant l’acheminement", "Accident de circulation impliquant le transporteur", "Refus de réception de l’échantillon par la structure destinataire", "Indisponibilité du moyen de transport", "Incident lié à la sécurité sur l’itinéraire", "Autre"
-                ]},
-                {"name": "autre_motif", "label": "Autre motif (préciser)", "type": "textarea"},
-                {"name": "maladie_echantillon", "label": "Type de maladie / échantillon concerné", "type": "multiselect", "required": True, "options": ["PFA", "Cas contacts PFA", "Mpox", "Choléra", "Rougeole", "Fièvre jaune", "Fièvres hémorragiques virales"]},
-            ],
-        },
-        {
-            "title": "4. Impact sur le transport et la traçabilité",
-            "description": "Cochez les conséquences observées ou les risques identifiés.",
-            "questions": [
-                {"name": "impacts", "label": "Impact(s) constaté(s)", "type": "multiselect", "options": [
-                    "Aucun impact constaté", "Dépassement du délai recommandé de collecte ou d’acheminement", "Retard dans la transmission au laboratoire destinataire", "Risque de rejet de l’échantillon par le laboratoire", "Altération de la qualité ou de l’intégrité de l’échantillon", "Perte de traçabilité ou interruption du suivi", "Données de suivi incomplètes, manquantes ou erronées", "Exposition accidentelle du personnel à un échantillon biologique", "Risque de contamination du personnel ou de l’environnement", "Rupture de la chaîne du froid pendant l’acheminement", "Nécessité de procéder à un nouveau prélèvement", "Autre"
-                ]},
-                {"name": "autre_impact", "label": "Autre impact (préciser)", "type": "textarea"},
-                {"name": "verification_effectuee", "label": "Vérification avec la fiche papier / le registre / le terrain effectuée ?", "type": "select", "required": True, "options": ["Oui", "Non"]},
-            ],
-        },
-        {
-            "title": "5. Notification et suivi",
-            "questions": [
-                {"name": "partage_whatsapp", "label": "Incident partagé au groupe WhatsApp de suivi ?", "type": "select", "options": ["Oui", "Non"]},
-                {"name": "date_partage_whatsapp", "label": "Date du partage", "type": "date"},
-                {"name": "presente_reunion", "label": "Présenté à la réunion hebdomadaire / bi-hebdomadaire ?", "type": "select", "options": ["Oui", "Non"]},
-                {"name": "date_reunion", "label": "Date de la réunion", "type": "date"},
-            ],
-        },
-        {
-            "title": "6. Mesures immédiates prises",
-            "description": "Saisissez les mesures principales. Le détail peut être complété dans les commentaires.",
-            "questions": [
-                {"name": "mesure_immediate", "label": "Mesure(s) immédiate(s) prise(s)", "type": "textarea", "required": True},
-                {"name": "responsable_mesure", "label": "Responsable", "type": "text"},
-                {"name": "date_heure_mesure", "label": "Date et heure", "type": "datetime"},
-                {"name": "resultat_mesure", "label": "Résultat obtenu", "type": "textarea"},
-            ],
-        },
-        {
-            "title": "7. Mesures correctives et clôture",
-            "questions": [
-                {"name": "action_corrective", "label": "Action corrective / préventive convenue", "type": "textarea", "required": True},
-                {"name": "responsable_action", "label": "Responsable de l’action", "type": "text", "required": True},
-                {"name": "echeance_action", "label": "Échéance", "type": "date"},
-                {"name": "statut_incident", "label": "Statut de l’incident", "type": "select", "required": True, "options": ["Ouvert", "En cours", "Résolu"]},
-                {"name": "date_resolution", "label": "Date de résolution", "type": "date"},
-                {"name": "preuve_cloture", "label": "Preuve / commentaire de clôture", "type": "textarea"},
-            ],
-        },
-    ],
-}
+LEGACY_SYSTEM_FORM_SHORT_TITLE = "Incidents MAPEPI"
 
 
 def db_conn() -> sqlite3.Connection:
@@ -143,17 +55,6 @@ def init_db() -> None:
             created_at TEXT NOT NULL,
             is_system INTEGER NOT NULL DEFAULT 0
         )""")
-        # Backward-compatible migrations for form sharing.
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(forms)").fetchall()}
-        if "public_token" not in columns:
-            conn.execute("ALTER TABLE forms ADD COLUMN public_token TEXT")
-        if "public_enabled" not in columns:
-            conn.execute("ALTER TABLE forms ADD COLUMN public_enabled INTEGER NOT NULL DEFAULT 0")
-        if "status" not in columns:
-            conn.execute("ALTER TABLE forms ADD COLUMN status TEXT NOT NULL DEFAULT 'published'")
-        conn.execute("""CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'enqueteur', active INTEGER NOT NULL DEFAULT 1)""")
-        if conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0:
-            conn.execute("INSERT INTO users(name, role) VALUES ('Berly LORA', 'admin')")
         conn.execute("""CREATE TABLE IF NOT EXISTS submissions (
             id TEXT PRIMARY KEY,
             form_id INTEGER NOT NULL,
@@ -161,12 +62,23 @@ def init_db() -> None:
             submitted_at TEXT NOT NULL,
             FOREIGN KEY(form_id) REFERENCES forms(id)
         )""")
-        row = conn.execute("SELECT id FROM forms WHERE short_title = ?", (MAPEPI_FORM["short_title"],)).fetchone()
-        if row is None:
-            conn.execute(
-                "INSERT INTO forms(title, short_title, description, schema_json, created_at, is_system) VALUES (?, ?, ?, ?, ?, 1)",
-                (MAPEPI_FORM["title"], MAPEPI_FORM["short_title"], MAPEPI_FORM["description"], json.dumps(MAPEPI_FORM, ensure_ascii=False), utc_now()),
-            )
+        conn.execute("""CREATE TABLE IF NOT EXISTS public_form_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            form_id INTEGER NOT NULL,
+            token TEXT NOT NULL UNIQUE,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(form_id) REFERENCES forms(id)
+        )""")
+        # No questionnaire is seeded on a fresh installation. For existing installs,
+        # retire the former bundled MAPEPI template without deleting any collected data.
+        legacy = conn.execute("SELECT id FROM forms WHERE short_title = ? AND is_system = 1", (LEGACY_SYSTEM_FORM_SHORT_TITLE,)).fetchone()
+        if legacy is not None:
+            collected = conn.execute("SELECT COUNT(*) FROM submissions WHERE form_id = ?", (legacy["id"],)).fetchone()[0]
+            if collected == 0:
+                conn.execute("DELETE FROM forms WHERE id = ?", (legacy["id"],))
+            else:
+                conn.execute("UPDATE forms SET is_system = 0 WHERE id = ?", (legacy["id"],))
 
 
 def utc_now() -> str:
@@ -178,9 +90,6 @@ def form_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     schema["id"] = row["id"]
     schema["created_at"] = row["created_at"]
     schema["is_system"] = bool(row["is_system"])
-    schema["public_enabled"] = bool(row["public_enabled"]) if "public_enabled" in row.keys() else False
-    schema["public_token"] = row["public_token"] if "public_token" in row.keys() else None
-    schema["status"] = row["status"] if "status" in row.keys() else "published"
     return schema
 
 
@@ -207,6 +116,10 @@ class SubmissionCreate(BaseModel):
     submitted_at: str | None = None
 
 
+class PublicSubmissionRequest(BaseModel):
+    data: dict[str, Any]
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     init_db()
@@ -215,66 +128,6 @@ def on_startup() -> None:
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
-
-
-@app.get("/p/{token}")
-def public_form_page(token: str) -> FileResponse:
-    with db_conn() as conn:
-        row = conn.execute("SELECT id FROM forms WHERE public_token=? AND public_enabled=1", (token,)).fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Ce formulaire public est indisponible ou a été fermé.")
-    return FileResponse(STATIC_DIR / "public.html")
-
-
-@app.get("/api/public/forms/{token}")
-def get_public_form(token: str) -> dict[str, Any]:
-    with db_conn() as conn:
-        row = conn.execute("SELECT * FROM forms WHERE public_token=? AND public_enabled=1", (token,)).fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Formulaire public indisponible")
-    schema = form_to_dict(row)
-    # Do not expose management fields or internal form database identifiers to respondents.
-    return {"key": schema.get("key"), "title": schema.get("title"), "short_title": schema.get("short_title"), "description": schema.get("description"), "sections": schema.get("sections", [])}
-
-
-@app.post("/api/public/forms/{token}/submissions")
-def submit_public_form(token: str, submission: dict[str, Any]) -> dict[str, Any]:
-    with db_conn() as conn:
-        row = conn.execute("SELECT * FROM forms WHERE public_token=? AND public_enabled=1", (token,)).fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Formulaire public indisponible")
-    schema = form_to_dict(row)
-    data = submission.get("data")
-    if not isinstance(data, dict):
-        raise HTTPException(status_code=422, detail="Les réponses doivent être fournies sous forme d'objet.")
-    # Honeypot field: silently acknowledge automated spam without storing it.
-    if str(data.get("website", "")).strip():
-        return {"ok": True, "id": str(uuid.uuid4()), "submitted_at": utc_now(), "message": "Votre réponse a été enregistrée."}
-    # Enforce required questions server-side as well as in the public browser form.
-    for section in schema.get("sections", []):
-        for question in section.get("questions", []):
-            if question.get("required") and not question.get("type") == "note":
-                value = data.get(question.get("name"))
-                if value is None or value == "" or value == []:
-                    raise HTTPException(status_code=422, detail=f"Réponse obligatoire manquante : {question.get('label', question.get('name'))}")
-    sub_id = str(uuid.uuid4())
-    submitted_at = utc_now()
-    data["_submission_channel"] = "public_link_anonymous"
-    with db_conn() as conn:
-        conn.execute("INSERT INTO submissions(id, form_id, payload_json, submitted_at) VALUES (?, ?, ?, ?)", (sub_id, row["id"], json.dumps(data, ensure_ascii=False), submitted_at))
-    return {"ok": True, "id": sub_id, "submitted_at": submitted_at, "message": "Votre réponse a été enregistrée."}
-
-
-@app.post("/api/forms/{form_id}/publish")
-def publish_form(form_id: int, payload: dict[str, Any]) -> dict[str, Any]:
-    enabled = bool(payload.get("enabled", True))
-    with db_conn() as conn:
-        row = conn.execute("SELECT id, public_token FROM forms WHERE id=?", (form_id,)).fetchone()
-        if row is None:
-            raise HTTPException(status_code=404, detail="Enquête introuvable")
-        token = row["public_token"] or uuid.uuid4().hex + uuid.uuid4().hex[:16]
-        conn.execute("UPDATE forms SET public_token=?, public_enabled=? WHERE id=?", (token, int(enabled), form_id))
-    return {"form_id": form_id, "public_enabled": enabled, "public_token": token, "public_url": f"/p/{token}" if enabled else None}
 
 
 @app.get("/manifest.webmanifest")
@@ -331,6 +184,71 @@ def create_form(form: FormCreate) -> dict[str, Any]:
     return get_form_or_404(int(form_id))
 
 
+@app.post("/api/forms/{form_id}/share")
+def create_public_link(form_id: int, request: Request) -> dict[str, Any]:
+    form = get_form_or_404(form_id)
+    token = secrets.token_urlsafe(24)
+    created = utc_now()
+    with db_conn() as conn:
+        conn.execute("INSERT INTO public_form_links(form_id, token, is_active, created_at) VALUES (?, ?, 1, ?)", (form_id, token, created))
+    base = str(request.base_url).rstrip("/")
+    return {"ok": True, "form_id": form_id, "form_title": form.get("title"), "token": token, "url": f"{base}/public/{token}", "created_at": created}
+
+
+@app.get("/api/forms/{form_id}/share")
+def get_public_links(form_id: int) -> list[dict[str, Any]]:
+    get_form_or_404(form_id)
+    with db_conn() as conn:
+        rows = conn.execute("SELECT token, is_active, created_at FROM public_form_links WHERE form_id=? ORDER BY id DESC", (form_id,)).fetchall()
+    return [{"token": r["token"], "is_active": bool(r["is_active"]), "created_at": r["created_at"]} for r in rows]
+
+
+@app.post("/api/forms/{form_id}/share/revoke")
+def revoke_public_links(form_id: int) -> dict[str, Any]:
+    get_form_or_404(form_id)
+    with db_conn() as conn:
+        conn.execute("UPDATE public_form_links SET is_active=0 WHERE form_id=?", (form_id,))
+    return {"ok": True, "revoked": True}
+
+
+@app.get("/api/public/{token}/form")
+def get_public_form(token: str) -> dict[str, Any]:
+    with db_conn() as conn:
+        row = conn.execute("SELECT form_id FROM public_form_links WHERE token=? AND is_active=1", (token,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Lien public invalide ou désactivé.")
+    form = get_form_or_404(int(row["form_id"]))
+    return {"key": form.get("key"), "title": form.get("title"), "short_title": form.get("short_title"), "description": form.get("description"), "sections": form.get("sections", [])}
+
+
+@app.get("/public/{token}")
+def public_form_page(token: str) -> FileResponse:
+    with db_conn() as conn:
+        row = conn.execute("SELECT id FROM public_form_links WHERE token=? AND is_active=1", (token,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Lien public invalide ou désactivé.")
+    return FileResponse(STATIC_DIR / "public.html", media_type="text/html")
+
+
+@app.post("/api/public/{token}/submissions")
+def submit_public_form(token: str, submission: PublicSubmissionRequest) -> dict[str, Any]:
+    with db_conn() as conn:
+        row = conn.execute("SELECT form_id FROM public_form_links WHERE token=? AND is_active=1", (token,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Lien public invalide ou désactivé.")
+    form_id = int(row["form_id"])
+    form = get_form_or_404(form_id)
+    missing = []
+    for section in form.get("sections", []):
+        for question in section.get("questions", []):
+            value = submission.data.get(question.get("name"))
+            if question.get("required") and (question.get("name") not in submission.data or value is None or value == "" or value == []):
+                missing.append(question.get("label") or question.get("name"))
+    if missing:
+        raise HTTPException(status_code=422, detail="Champs obligatoires manquants : " + ", ".join(missing))
+    return create_submission(SubmissionCreate(form_id=form_id, data=submission.data))
+
+
 @app.delete("/api/forms/{form_id}")
 def delete_form(form_id: int) -> dict[str, Any]:
     with db_conn() as conn:
@@ -338,8 +256,10 @@ def delete_form(form_id: int) -> dict[str, Any]:
         if row is None:
             raise HTTPException(status_code=404, detail="Enquête introuvable")
         if row["is_system"]:
-            raise HTTPException(status_code=400, detail="Le formulaire MAPEPI intégré ne peut pas être supprimé.")
-        conn.execute("DELETE FROM submissions WHERE form_id = ?", (form_id,))
+            raise HTTPException(status_code=400, detail="Ce formulaire système ne peut pas être supprimé.")
+        submission_count = conn.execute("SELECT COUNT(*) FROM submissions WHERE form_id = ?", (form_id,)).fetchone()[0]
+        if submission_count:
+            raise HTTPException(status_code=409, detail="Ce formulaire possède des soumissions. Archivez-le plutôt que de supprimer les données collectées.")
         conn.execute("DELETE FROM forms WHERE id = ?", (form_id,))
     return {"ok": True}
 
@@ -516,116 +436,36 @@ def list_submissions(form_id: int | None = None) -> list[dict[str, Any]]:
 
 
 @app.get("/api/dashboard")
-def dashboard(start_date: str | None = None, end_date: str | None = None, form_id: int | None = None, province: str | None = None) -> dict[str, Any]:
-    records = read_submissions(form_id)
-    filtered = []
-    for rec in records:
-        date_part = str(rec.get("submitted_at", ""))[:10]
-        if start_date and date_part < start_date: continue
-        if end_date and date_part > end_date: continue
-        if province and province != "all":
-            pv = str(rec.get("data", {}).get("province", ""))
-            if pv.replace("-", " ").casefold() != province.replace("-", " ").casefold(): continue
-        filtered.append(rec)
-    all_forms = list_forms()
+def dashboard() -> dict[str, Any]:
+    with db_conn() as conn:
+        form_count = conn.execute("SELECT COUNT(*) FROM forms").fetchone()[0]
+        submission_count = conn.execute("SELECT COUNT(*) FROM submissions").fetchone()[0]
+        recent = conn.execute("""SELECT s.id, s.form_id, s.payload_json, s.submitted_at, f.short_title
+                                FROM submissions s JOIN forms f ON f.id=s.form_id ORDER BY s.submitted_at DESC LIMIT 7""").fetchall()
+        by_form = conn.execute("""SELECT f.short_title, COUNT(s.id) AS n FROM forms f LEFT JOIN submissions s ON s.form_id=f.id
+                               GROUP BY f.id ORDER BY n DESC, f.id ASC""").fetchall()
+        all_payloads = conn.execute("SELECT payload_json FROM submissions").fetchall()
     statuses: dict[str, int] = {"Ouvert": 0, "En cours": 0, "Résolu": 0}
     disease_counts: dict[str, int] = {}
-    by_form_counts: dict[str, int] = {}
-    monthly: dict[str, int] = {}
-    points: list[dict[str, Any]] = []
-    for rec in filtered:
-        payload = rec["data"]
-        status = payload.get("statut_incident") or payload.get("status")
-        if status in statuses: statuses[status] += 1
+    for row in all_payloads:
+        payload = json.loads(row["payload_json"])
+        status = payload.get("statut_incident")
+        if status in statuses:
+            statuses[status] += 1
         diseases = payload.get("maladie_echantillon", [])
-        if isinstance(diseases, str): diseases = [diseases]
+        if isinstance(diseases, str):
+            diseases = [diseases]
         if isinstance(diseases, list):
-            for disease in diseases: disease_counts[str(disease)] = disease_counts.get(str(disease), 0) + 1
-        title = rec.get("short_title") or rec.get("form_title") or "Enquête"
-        by_form_counts[title] = by_form_counts.get(title, 0) + 1
-        month = str(rec.get("submitted_at", ""))[:7]
-        if month: monthly[month] = monthly.get(month, 0) + 1
-        lat, lon = extract_coordinates(payload)
-        if lat is not None and lon is not None:
-            points.append({"id": rec["id"], "lat": lat, "lon": lon, "title": title, "submitted_at": rec["submitted_at"], "province": payload.get("province", ""), "primary": payload.get("reference_incident") or payload.get("name") or rec["id"][:8]})
-    all_recs = read_submissions(form_id)
-    def in_range(rec, a, b):
-        d = str(rec.get("submitted_at", ""))[:10]
-        return (not a or d >= a) and (not b or d <= b)
-    prev_count = None
-    if start_date and end_date:
-        try:
-            a, b = datetime.fromisoformat(start_date), datetime.fromisoformat(end_date)
-            span = (b - a).days + 1
-            pa, pb = (a - timedelta(days=span)).date().isoformat(), (a - timedelta(days=1)).date().isoformat()
-            prev_count = sum(1 for r in all_recs if in_range(r, pa, pb))
-        except ValueError:
-            pass
-    daily: dict[str, list[int]] = {}
-    by_province: dict[str, int] = {}
-    by_zone: dict[str, int] = {}
-    last_by_form: dict[str, list[str]] = {}
-    geo = 0
-    comp_sum = 0.0
-    schemas = {f["id"]: f for f in all_forms}
-    for rec in filtered:
-        d = str(rec["submitted_at"])[:10]
-        has_gps = extract_coordinates(rec["data"])[0] is not None
-        geo += has_gps
-        row = daily.setdefault(d, [0, 0]); row[0] += 1; row[1] += int(has_gps)
-        pv = str(rec["data"].get("province") or "Autres"); by_province[pv] = by_province.get(pv, 0) + 1
-        zs = rec["data"].get("zone_sante")
-        if zs: by_zone[str(zs)] = by_zone.get(str(zs), 0) + 1
-        qs = [q for sec in schemas.get(rec["form_id"], {}).get("sections", []) for q in sec.get("questions", []) if q.get("type") != "note"]
-        req = [q for q in qs if q.get("required")] or qs
-        if req:
-            comp_sum += sum(1 for q in req if rec["data"].get(q["name"]) not in (None, "", [])) / len(req)
-        dates = last_by_form.setdefault(rec["short_title"], [rec["submitted_at"][:10], rec["submitted_at"][:10]])
-        dates[0] = min(dates[0], rec["submitted_at"][:10]); dates[1] = max(dates[1], rec["submitted_at"][:10])
-    counts_by_form = {f["id"]: 0 for f in all_forms}
-    for rec in filtered: counts_by_form[rec["form_id"]] = counts_by_form.get(rec["form_id"], 0) + 1
-    published = sum(1 for f in all_forms if f.get("status", "published") == "published")
-    with db_conn() as conn:
-        users = [dict(r) for r in conn.execute("SELECT role, COUNT(*) n FROM users WHERE active=1 GROUP BY role").fetchall()]
-    n = len(filtered)
+            for disease in diseases:
+                disease_counts[str(disease)] = disease_counts.get(str(disease), 0) + 1
     return {
-        "form_count": len(all_forms), "published_count": published, "draft_count": len(all_forms) - published,
-        "submission_count": n, "previous_count": prev_count, "geo_count": geo,
-        "province_count": len([p for p in by_province if p != "Autres"]), "zone_count": len(by_zone),
-        "completeness": round(100 * comp_sum / n) if n else 0,
-        "users": {u["role"]: u["n"] for u in users},
-        "status_counts": statuses, "disease_counts": disease_counts,
-        "by_form": [{"label": k, "value": v} for k, v in sorted(by_form_counts.items(), key=lambda x: -x[1])],
-        "by_province": [{"label": k, "value": v} for k, v in sorted(by_province.items(), key=lambda x: -x[1])],
-        "by_zone": [{"label": k, "value": v} for k, v in sorted(by_zone.items(), key=lambda x: -x[1])],
-        "daily": [{"label": k, "value": v[0], "gps": v[1]} for k, v in sorted(daily.items())],
-        "monthly": [{"label": k, "value": v} for k, v in sorted(monthly.items())],
-        "forms_table": [{"id": f["id"], "title": f.get("short_title") or f["title"], "status": f.get("status", "published"), "count": counts_by_form.get(f["id"], 0),
-                         "from": (last_by_form.get(f.get("short_title"), [None, None])[0]), "to": (last_by_form.get(f.get("short_title"), [None, None])[1])} for f in all_forms],
-        "points": points, "recent": filtered[:7],
-        "filter_context": {"start_date": start_date, "end_date": end_date, "form_id": form_id, "province": province}
+        "form_count": form_count,
+        "submission_count": submission_count,
+        "status_counts": statuses,
+        "disease_counts": disease_counts,
+        "by_form": [{"label": r["short_title"], "value": r["n"]} for r in by_form],
+        "recent": [{"id": r["id"], "form_id": r["form_id"], "form_title": r["short_title"], "data": json.loads(r["payload_json"]), "submitted_at": r["submitted_at"]} for r in recent],
     }
-
-
-def extract_coordinates(payload: dict[str, Any]) -> tuple[float | None, float | None]:
-    # Supports explicit latitude/longitude fields and common XLSForm geopoint representations.
-    for lat_key, lon_key in (("latitude", "longitude"), ("lat", "lon"), ("gps_latitude", "gps_longitude")):
-        try:
-            if payload.get(lat_key) is not None and payload.get(lon_key) is not None:
-                lat, lon = float(payload[lat_key]), float(payload[lon_key])
-                if -90 <= lat <= 90 and -180 <= lon <= 180: return lat, lon
-        except (TypeError, ValueError): pass
-    for key, value in payload.items():
-        if str(key).lower() in ("location", "geopoint", "gps", "point_gps", "position"):
-            try:
-                if isinstance(value, (list, tuple)) and len(value) >= 2:
-                    lat, lon = float(value[0]), float(value[1])
-                else:
-                    parts = str(value).replace(",", " ").split()
-                    lat, lon = float(parts[0]), float(parts[1])
-                if -90 <= lat <= 90 and -180 <= lon <= 180: return lat, lon
-            except (TypeError, ValueError, IndexError): pass
-    return None, None
 
 
 def flatten_records(rows: list[dict[str, Any]]) -> tuple[list[str], list[list[str]]]:
@@ -690,26 +530,3 @@ def export_xlsx(form_id: int | None = None) -> StreamingResponse:
     out.seek(0)
     name = f"collectplus_export_{form_id or 'toutes_enquetes'}.xlsx"
     return StreamingResponse(out, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f'attachment; filename="{name}"'})
-
-
-@app.post("/api/forms/{form_id}/status")
-def set_form_status(form_id: int, payload: dict[str, Any]) -> dict[str, Any]:
-    status = "draft" if payload.get("status") == "draft" else "published"
-    with db_conn() as conn:
-        if conn.execute("UPDATE forms SET status=? WHERE id=?", (status, form_id)).rowcount == 0:
-            raise HTTPException(status_code=404, detail="Enquête introuvable")
-    return {"form_id": form_id, "status": status}
-
-
-@app.get("/api/users")
-def list_users() -> list[dict[str, Any]]:
-    with db_conn() as conn:
-        return [dict(r) for r in conn.execute("SELECT * FROM users ORDER BY id").fetchall()]
-
-
-@app.get("/download/apk")
-def download_apk() -> FileResponse:
-    apk = DATA_DIR / "CollectPlus.apk"
-    if not apk.exists():
-        raise HTTPException(status_code=404, detail="APK non compilé : voir android-wrapper/README_ANDROID.md")
-    return FileResponse(apk, media_type="application/vnd.android.package-archive", filename="CollectPlus.apk")
