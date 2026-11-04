@@ -46,7 +46,7 @@ jobs:
         working-directory: android-wrapper
         run: npm install --no-audit --no-fund
 
-      - name: Copier les fichiers web, y compris le formulaire MAPEPI hors ligne
+      - name: Copier les fichiers web et le catalogue de formulaires hors ligne
         working-directory: android-wrapper
         run: |
           npm run copy-web

@@ -115,7 +115,7 @@
     } catch (error) {
       state.forms = readLS(LS.forms, []);
       if (!state.forms.length) {
-        // APK/PWA fallback: include the MAPEPI starter form so first launch works offline.
+        // APK/PWA fallback: read the bundled form catalog (empty by design; no preloaded questionnaire).
         try {
           const response = await fetch('/static/default-forms.json', {cache: 'no-store'});
           if (response.ok) {
@@ -338,7 +338,7 @@
       const id=Number(btn.dataset.shareForm);btn.disabled=true;btn.textContent='Création…';
       try{const result=await api(`/api/forms/${id}/share`,{method:'POST'});const url=result.url;
         try{await navigator.clipboard.writeText(url);toast('Lien public créé et copié','success',url);}catch{window.prompt('Copiez le lien public du formulaire :',url);}
-        const qr=`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(url)}`;
+        const qr=apiUrl(`/api/forms/${id}/share/${encodeURIComponent(result.token)}/qr.png`);
         const popup=window.open(qr,'_blank','noopener');if(!popup)toast('Lien prêt. Autorisez les popups pour ouvrir le QR code.','info');
       }catch(error){toast('Impossible de créer le lien public','error',error.message||'Réessayez.');}
       finally{btn.disabled=false;btn.textContent='↗ Partager';}
@@ -346,6 +346,21 @@
   }
   function countQuestions(form) { return (form.sections || []).reduce((sum, section) => sum + (section.questions || []).length, 0); }
   $('#formSearch').addEventListener('input', renderForms);
+  $('#cpQuickImport')?.addEventListener('click', () => $('#importButton')?.click());
+  $('#globalSearch')?.addEventListener('keydown', event => {
+    if (event.key !== 'Enter') return;
+    const query = event.currentTarget.value.trim();
+    if (!query) return;
+    const matchingForm = state.forms.some(form => `${form.title || ''} ${form.short_title || ''} ${form.description || ''}`.toLowerCase().includes(query.toLowerCase()));
+    if (matchingForm) {
+      $('#formSearch').value = query;
+      navigate('forms');
+      renderForms();
+    } else {
+      $('#submissionSearch').value = query;
+      navigate('submissions');
+    }
+  });
 
   function renderCollectPicker() {
     const root = $('#collectFormPicker');
@@ -377,6 +392,10 @@
     } else if (type === 'multiselect' || type === 'select_multiple') {
       control = `<div class="choice-list">${(q.options || []).map((option, i) => `<label class="choice-option"><input type="checkbox" name="${name}" value="${escapeHtml(option)}"><span>${escapeHtml(option)}</span></label>`).join('')}</div>`;
       if (q.required) control += `<input type="text" class="multi-required-proxy" name="${name}__required" required tabindex="-1" aria-hidden="true" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none">`;
+    } else if (type === 'geopoint' || type === 'gps') {
+      control = `<div class="cp-gps-field"><input class="question-control" name="${name}" readonly placeholder="Position non capturée"${required}><button class="button button-secondary cp-capture-gps" type="button" data-gps-field="${name}">◎ Capturer ma position</button><small class="question-hint cp-gps-status">Latitude, longitude et précision seront enregistrées.</small></div>`;
+    } else if (type === 'image' || type === 'photo') {
+      control = `<div class="cp-photo-field"><input class="question-control" name="${name}" type="file" accept="image/*" capture="environment"${required}><small class="question-hint">Prenez une photo ou sélectionnez une image.</small><img class="cp-photo-preview hidden" alt="Aperçu de la photo" style="max-width:100%;max-height:220px;border-radius:12px;margin-top:8px"></div>`;
     } else {
       const inputType = ['text','date','time','datetime','datetime-local','number','email','tel'].includes(type) ? type : (type === 'phone' ? 'tel' : 'text');
       const actualType = inputType === 'datetime' ? 'datetime-local' : inputType;
@@ -394,6 +413,23 @@
       <div class="collect-form-footer"><div class="form-footer-note">* Champ obligatoire · Enregistrement local si hors ligne</div><div class="form-footer-buttons"><button class="button button-secondary" type="button" id="resetSurveyButton">Effacer</button><button class="button button-primary" type="submit">Enregistrer la réponse <span>→</span></button></div></div>
     </form>`;
     const surveyForm = $('#activeSurveyForm');
+    $$('[data-gps-field]', surveyForm).forEach(button => button.addEventListener('click', () => {
+      const field = surveyForm.elements.namedItem(button.dataset.gpsField);
+      const status = button.parentElement.querySelector('.cp-gps-status');
+      if (!navigator.geolocation) { status.textContent = 'GPS non disponible sur cet appareil.'; return; }
+      button.disabled = true; button.textContent = 'Localisation en cours…';
+      navigator.geolocation.getCurrentPosition(pos => {
+        field.value = `${pos.coords.latitude}, ${pos.coords.longitude}, ${Math.round(pos.coords.accuracy)} m`;
+        field.dataset.latitude = pos.coords.latitude; field.dataset.longitude = pos.coords.longitude; field.dataset.accuracy = pos.coords.accuracy;
+        status.textContent = `Position capturée · précision ${Math.round(pos.coords.accuracy)} m`;
+        button.disabled = false; button.textContent = '✓ Position capturée'; updateFormProgress();
+      }, err => { status.textContent = err.code === 1 ? 'Autorisation GPS refusée.' : 'Capture GPS impossible. Réessayez.'; button.disabled = false; button.textContent = '◎ Capturer ma position'; }, {enableHighAccuracy:true, timeout:20000, maximumAge:0});
+    }));
+    $$('input[type=file][accept="image/*"]', surveyForm).forEach(input => input.addEventListener('change', () => {
+      const file=input.files?.[0], preview=input.parentElement.querySelector('.cp-photo-preview'); if(!file)return;
+      if(file.size>12*1024*1024){input.value='';toast('La photo dépasse 12 Mo.','error');return;}
+      preview.src=URL.createObjectURL(file); preview.classList.remove('hidden'); updateFormProgress();
+    }));
     $$('.question-field input, .question-field select, .question-field textarea', surveyForm).forEach(input => {
       if (input.type === 'date' && input.name === 'date_declaration' && !input.value) input.value = new Date().toISOString().slice(0,10);
       input.addEventListener('input', updateFormProgress);
@@ -415,7 +451,7 @@
       e.preventDefault();
       const validation = validateSurveyForm(surveyForm, form);
       if (validation) { toast(validation, 'error'); return; }
-      const data = collectAnswers(surveyForm, form);
+      const data = await collectAnswers(surveyForm, form);
       const record = {id: uuid(), form_id: form.id, form_key: form.key || null, data, submitted_at: new Date().toISOString()};
       await saveSubmission(record);
       surveyForm.reset();
@@ -440,23 +476,32 @@
         if (!count) return `Le champ « ${q.label} » est obligatoire.`;
       } else {
         const field = formEl.elements.namedItem(q.name);
-        if (field && !String(field.value || '').trim()) return `Le champ « ${q.label} » est obligatoire.`;
+        if (['image','photo'].includes(q.type)) { if (!field?.files?.[0]) return `Veuillez ajouter une photo pour « ${q.label} ».`; }
+        else if (['geopoint','gps'].includes(q.type)) { if (!String(field?.value || '').trim()) return `Veuillez capturer la position pour « ${q.label} ».`; }
+        else if (field && !String(field.value || '').trim()) return `Le champ « ${q.label} » est obligatoire.`;
       }
     }
     return '';
   }
-  function collectAnswers(formEl, form) {
+  async function collectAnswers(formEl, form) {
     const data = {};
     for (const section of form.sections || []) for (const q of section.questions || []) {
       if (q.type === 'note') continue;
-      if (q.type === 'multiselect') {
+      if (['multiselect','select_multiple'].includes(q.type)) {
         data[q.name] = $$(`input[name="${CSS.escape(q.name)}"]:checked`, formEl).map(el => el.value);
       } else {
         const element = formEl.elements.namedItem(q.name);
-        data[q.name] = element ? String(element.value || '').trim() : '';
+        if (['geopoint','gps'].includes(q.type)) {
+          if (element?.value) data[q.name] = {latitude:Number(element.dataset.latitude),longitude:Number(element.dataset.longitude),accuracy:Number(element.dataset.accuracy),display:element.value};
+        } else if (['image','photo'].includes(q.type)) {
+          const file=element?.files?.[0]; if(file) data[q.name]=await cpImageData(file);
+        } else data[q.name] = element ? String(element.value || '').trim() : '';
       }
     }
     return data;
+  }
+  function cpImageData(file) {
+    return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onerror=()=>reject(new Error('Lecture de la photo impossible'));reader.onload=()=>{const img=new Image();img.onerror=()=>resolve(reader.result);img.onload=()=>{const scale=Math.min(1,1280/Math.max(img.width,img.height)),canvas=document.createElement('canvas');canvas.width=Math.round(img.width*scale);canvas.height=Math.round(img.height*scale);canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);resolve(canvas.toDataURL('image/jpeg',.76));};img.src=reader.result;};reader.readAsDataURL(file);});
   }
   function uuid() {
     if (crypto && crypto.randomUUID) return crypto.randomUUID();
@@ -609,8 +654,10 @@
     $('#questionCountPill').textContent = `${state.builderQuestions.length} QUESTION${state.builderQuestions.length === 1 ? '' : 'S'}`;
     $('#builderQuestions').innerHTML = state.builderQuestions.map((q, i) => `<div class="builder-question" data-builder-question="${i}">
       <div class="builder-question-top"><strong>Question ${i+1}</strong><button type="button" class="remove-question" data-remove-question="${i}">Supprimer ×</button></div>
-      <div class="builder-question-grid"><label>Libellé de la question *<input data-q-field="label" data-q-index="${i}" value="${escapeHtml(q.label)}" placeholder="Ex. Quel est votre âge ?"></label><label>Type de réponse<select data-q-field="type" data-q-index="${i}">${[['text','Texte court'],['textarea','Texte long'],['number','Nombre'],['date','Date'],['time','Heure'],['select','Liste à choix unique'],['multiselect','Choix multiples'],['email','E-mail'],['phone','Téléphone']].map(([v,l])=>`<option value="${v}" ${q.type===v?'selected':''}>${l}</option>`).join('')}</select></label></div>
+      <div class="builder-question-grid"><label>Libellé de la question *<input data-q-field="label" data-q-index="${i}" value="${escapeHtml(q.label)}" placeholder="Ex. Quel est votre âge ?"></label><label>Type de réponse<select data-q-field="type" data-q-index="${i}">${[['text','Texte court'],['textarea','Texte long'],['number','Nombre'],['date','Date'],['time','Heure'],['select','Liste à choix unique'],['multiselect','Choix multiples'],['email','E-mail'],['phone','Téléphone'],['geopoint','Géolocalisation GPS'],['image','Photo / Appareil photo']].map(([v,l])=>`<option value="${v}" ${q.type===v?'selected':''}>${l}</option>`).join('')}</select></label></div>
       ${['select','multiselect'].includes(q.type) ? `<div class="builder-option-row"><label>Options de réponse (séparées par des virgules)<input data-q-field="options" data-q-index="${i}" value="${escapeHtml(q.options || '')}" placeholder="Oui, Non, Ne sait pas"></label></div>` : ''}
+      ${['geopoint','gps'].includes(q.type) ? `<div class="question-hint">Le participant devra autoriser la localisation de son appareil. Latitude, longitude et précision GPS seront enregistrées.</div>` : ''}
+      ${['image','photo'].includes(q.type) ? `<div class="question-hint">Le participant pourra prendre une photo avec son téléphone ou choisir une image. La photo est optimisée avant envoi.</div>` : ''}
       <div style="margin-top:11px"><label class="builder-required"><input type="checkbox" data-q-field="required" data-q-index="${i}" ${q.required?'checked':''}> Réponse obligatoire</label></div>
     </div>`).join('');
     $$('[data-q-field]', $('#builderQuestions')).forEach(input => {

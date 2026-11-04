@@ -1,4 +1,4 @@
-name: CollectPlus - vérification
+name: CollectPlus - revue securite et tests
 
 on:
   push:
@@ -12,34 +12,35 @@ permissions:
 
 jobs:
   verify-app:
-    name: Vérifier l'application web et l'API
+    name: Syntaxe, controles d'acces et parcours API
     runs-on: ubuntu-latest
     steps:
-      - name: Récupérer le code
+      - name: Recuperer le code
         uses: actions/checkout@v7
-
       - name: Installer Python
         uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: requirements.txt
-
-      - name: Installer les dépendances
+      - name: Installer les dependances
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-
-      - name: Vérifier la syntaxe Python
-        run: python -m compileall -q app
-
-      - name: Vérifier le JSON du formulaire MAPEPI embarqué
-        run: python -m json.tool app/static/default-forms.json > /dev/null
-
-      - name: Démarrer le serveur et vérifier les routes essentielles
-        shell: bash
+      - name: Syntaxe Python et JSON
         run: |
-          set -euo pipefail
+          python -m compileall -q app
+          python -m json.tool app/static/default-forms.json > /dev/null
+      - name: Syntaxe JavaScript
+        run: |
+          node --check app/static/app.js
+          node --check app/static/public.js
+      - name: Tests API securite et flux public
+        env:
+          COLLECTPLUS_ADMIN_USERNAME: ci-admin
+          COLLECTPLUS_ADMIN_PASSWORD: ci-password-test-only
+          COLLECTPLUS_DB: /tmp/collectplus-ci.db
+        run: |
           python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > server.log 2>&1 &
           SERVER_PID=$!
           trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
@@ -47,24 +48,6 @@ jobs:
             if curl --fail --silent http://127.0.0.1:8000/api/health > health.json; then break; fi
             sleep 1
           done
-          python - <<'PY'
-          import json
-          from urllib.request import urlopen
-          with open('health.json', encoding='utf-8') as f:
-              health = json.load(f)
-          assert health.get('status') == 'ok', health
-          assert health.get('app') == 'CollectPlus', health
-          with urlopen('http://127.0.0.1:8000/') as response:
-              assert response.status == 200
-              assert b'CollectPlus' in response.read()
-          with urlopen('http://127.0.0.1:8000/api/forms') as response:
-              forms = json.load(response)
-          assert isinstance(forms, list) and len(forms) >= 1, forms
-          with urlopen('http://127.0.0.1:8000/static/default-forms.json') as response:
-              bundled_forms = json.load(response)
-          assert any(f.get('key') == 'mapepi-incidents-v1' for f in bundled_forms)
-          print('CollectPlus OK : interface, API, formulaire MAPEPI et secours hors ligne disponibles.')
-          PY
-
+          python tests/security_api_smoke.py
       - name: Construire l'image Docker
         run: docker build -t collectplus:ci .

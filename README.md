@@ -1,68 +1,86 @@
-# CollectPlus v0.6.0 — Refonte dashboard
+# CollectPlus v0.7.0 — Revue sécurité et durcissement
 
-CollectPlus est une application web de création, collecte et analyse de formulaires de terrain (FastAPI + SQLite + interface web/PWA + wrapper Android Capacitor).
+CollectPlus est une application de collecte et d’analyse de formulaires terrain (FastAPI, SQLite, SPA/PWA et wrapper Capacitor Android). Cette livraison reprend la version 0.6.2 et ajoute un premier niveau de protections côté API et des tests automatisés. Le design de dashboard existant est conservé.
 
-## Changements de cette livraison
+## Changements v0.7.0
 
-- Refonte de la page d'accueil/dashboard en reprenant la composition visuelle de la référence : KPI, filtres période/province/formulaire, courbe de tendance, carte de collecte, dernières soumissions, distribution et qualité GPS, panneau d'aide au partage.
-- Les valeurs du dashboard sont issues des soumissions réellement enregistrées ; aucune statistique fictive n'est injectée.
-- Carte Leaflet/OpenStreetMap qui place les soumissions possédant des coordonnées GPS. Les données de GPS sont recherchées dans les champs latitude/longitude et dans des formats de localisation courants.
-- Responsive ordinateur/tablette/mobile, thème bleu nuit, bleu clair et turquoise.
-- **Aucun questionnaire d'enquête n'est préchargé** dans une nouvelle installation : la bibliothèque est vide, et l'utilisateur doit créer ou importer ses formulaires.
-- Migration de l'ancien formulaire système MAPEPI : si aucune soumission n'existe, l'ancien modèle système est supprimé ; s'il possède des réponses, il est conservé comme formulaire non système pour ne pas perdre les données.
-- Suppression de la suppression cascade des soumissions lors de la suppression d'un formulaire : un formulaire ayant des réponses renvoie un message de conflit et ses données sont préservées.
-- Partage public par lien tokenisé : le participant ouvre le lien sans compte et soumet sa réponse. Le créateur peut générer un lien depuis la carte de formulaire ; l’interface copie le lien et ouvre le QR via un service QR externe.
-- Révocation des liens publics depuis l’API de gestion.
-- Cache PWA versionné pour renouveler les ressources du design.
+### Contrôle d’accès et sécurité HTTP
+- Authentification HTTP Basic obligatoire sur l’interface principale et les routes d’administration/API (formulaires, soumissions, rapports, exports, partage et QR code).
+- Les routes publiques participant (`/public/{token}`, `/api/public/{token}/...`) sont exemptées afin que le répondant puisse ouvrir et soumettre sans compte.
+- Le endpoint santé `/api/health` et les ressources statiques restent publics.
+- Credentials uniquement par variables d’environnement : `COLLECTPLUS_ADMIN_USERNAME` et `COLLECTPLUS_ADMIN_PASSWORD`. Si le mot de passe n’est pas configuré, l’accès administrateur est bloqué par défaut (HTTP 503) — aucune valeur par défaut faible.
+- CORS same-origin par défaut. Les origines additionnelles doivent être explicitement listées dans `COLLECTPLUS_ALLOWED_ORIGINS`, séparées par des points-virgules.
+- En-têtes de sécurité : CSP, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, HSTS sur HTTPS.
+
+### Validation et protections des données
+- Contrôle de la structure des formulaires : nombre de sections/questions, noms de champs conformes et uniques, types autorisés, limites de taille des libellés et choix.
+- Validation serveur des réponses publiques et synchronisées : champs attendus, obligatoire, valeurs des listes, limites GPS latitude/longitude/précision, valeurs numériques et images.
+- Les images doivent correspondre au MIME annoncé (signature JPEG/PNG/WebP) et faire 6 Mo maximum après optimisation.
+- Limite globale du corps HTTP de 10 Mo selon `Content-Length`; limite d’import XLSX/JSON à 5 Mo; contrôle du ratio et de la taille décompressée des archives XLSX; limites des lignes survey/choices/settings.
+- Limitation de fréquence des soumissions publiques : 12 POST par IP et fenêtre de 60 secondes (limiteur en mémoire, adapté à une instance unique seulement).
+- Neutralisation des formules dans les exports CSV/Excel (préfixe apostrophe pour les valeurs potentiellement interprétées comme formule).
+- QR code généré localement par le serveur; l’URL publique n’est plus envoyée au service QR tiers.
+- SQLite : WAL, `busy_timeout`, `synchronous=FULL`; suppression d’un formulaire sans soumission supprime aussi les tokens de partage qui y sont liés.
+
+### Tests automatisés
+- `tests/security_api_smoke.py` teste l’auth admin, la validation du schéma, la présence de champs obligatoires, la validation GPS, des choix, la signature d’image, la génération QR locale, la neutralisation CSV, le throttling public et la révocation des liens.
+- Workflow GitHub Actions vérifie la syntaxe Python/JavaScript, lance les tests API et construit l’image Docker.
+- Dependabot surveille les dépendances Python et GitHub Actions.
 
 ## Lancement Windows
 
 1. Installer Python 3.11+.
-2. Décompresser cette archive.
+2. Décompresser le ZIP.
 3. Double-cliquer `run_windows.bat`.
-4. Le script crée `.venv`, installe `requirements.txt`, lance FastAPI et ouvre le navigateur.
-5. URL : http://127.0.0.1:8000
+4. Définir l’identifiant et le mot de passe administrateur lorsqu’ils sont demandés.
+5. Le navigateur ouvre `http://127.0.0.1:8000`. Le navigateur demandera les identifiants Basic Auth.
 
-La première installation de dépendances requiert Internet. Garder la console ouverte pour maintenir le serveur.
+Le script local fixe `COLLECTPLUS_PUBLIC_BASE_URL=http://127.0.0.1:8000`. Garder la console ouverte.
 
-## Lancement manuel
+## Déploiement Render
 
-```cmd
-py -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:app --host 127.0.0.1 --port 8000
+Configurer ces variables d’environnement dans Render **avant** le redéploiement :
+
+- `COLLECTPLUS_ADMIN_USERNAME` : identifiant administrateur non trivial.
+- `COLLECTPLUS_ADMIN_PASSWORD` : mot de passe fort et unique (au moins 24 caractères aléatoires conseillé).
+- `COLLECTPLUS_PUBLIC_BASE_URL` : `https://collectplus.onrender.com` (ou URL réelle de ton service).
+- `COLLECTPLUS_DB` : chemin sur le disque persistant, par exemple `/var/data/collectplus.db`.
+- `COLLECTPLUS_ALLOWED_ORIGINS` : laisser vide pour le front même origine; sinon inscrire uniquement les origines exactes séparées par `;`.
+
+Ajouter un disque persistant Render monté sur `/var/data`. Ne pas placer la base SQLite dans le système de fichiers éphémère du conteneur. Les tokens de partage publics ne sont pas des identifiants administrateur : toute personne qui possède un lien actif peut participer.
+
+## Docker Compose
+
+Créer un fichier `.env` (ne jamais le committer) avec :
+
+```env
+COLLECTPLUS_ADMIN_USERNAME=admin
+COLLECTPLUS_ADMIN_PASSWORD=REMPLACER_PAR_UN_SECRET_LONG_UNIQUE
+COLLECTPLUS_PUBLIC_BASE_URL=http://localhost:8000
+COLLECTPLUS_ALLOWED_ORIGINS=
 ```
 
-## Lancement Docker / Render
+Puis : `docker compose up --build`. Le volume `./data:/app/data` doit être protégé sur l’hôte.
 
-Le `Dockerfile` expose le port 8000. Pour Docker local :
+## Sauvegarde SQLite
+
+Une sauvegarde cohérente peut être créée par :
 
 ```bash
-docker compose up --build
+python scripts/backup_sqlite.py [chemin_db] [dossier_sauvegarde] [retention_jours]
 ```
 
-Pour Render, utiliser le Dockerfile existant et un disque persistant monté pour la base SQLite, avec `COLLECTPLUS_DB` pointant vers un chemin sur ce disque. Ne remplacez pas ou ne supprimez pas la base en place sans sauvegarde préalable.
+Par défaut, sauvegarde `data/collectplus.db` vers `data/backups`, vérifie `PRAGMA integrity_check` et purge les sauvegardes de plus de 30 jours. Les sauvegardes contiennent potentiellement des informations personnelles et des photos : protéger le dossier, chiffrer le stockage et conserver une copie hors serveur. Le script n’est pas un ordonnanceur; configurer une tâche planifiée adaptée.
 
-## Carte et dépendances web externes
+## Limites résiduelles — à ne pas confondre avec une certification de production
 
-La carte s'appuie sur Leaflet 1.9.4 et les tuiles OpenStreetMap via CDN. La cartographie de fond nécessite une connexion Internet. Les marqueurs ne s'affichent que pour les soumissions avec coordonnées GPS reconnues. Le dashboard n'invente pas de points, formulaires ou soumissions.
+- HTTP Basic est un compte administrateur partagé, pas une gestion complète d’utilisateurs/RBAC, MFA ou révocation par personne. L’utiliser uniquement derrière HTTPS en production.
+- Le rate limit est en mémoire et par processus. Pour plusieurs workers/instances, utiliser un reverse proxy ou Redis avec limitation partagée.
+- SQLite convient à une instance de taille modérée; l’architecture n’est pas préparée au scaling horizontal ou à une charge élevée.
+- Les données et photos ne sont pas chiffrées au niveau applicatif dans SQLite. Le chiffrement du disque/volume et des backups doit être fourni par l’infrastructure; SQLCipher n’est pas intégré.
+- Pas encore de journal d’audit métier complet, d’authentification individuelle, de RBAC, de workflow de consentement, de politique de rétention automatique ni de supervision de sécurité.
+- Compatibilité XLSForm partielle (pas de moteur complet XPath/skip logic/repeat groups/constraints avancées). Les formulaires importés doivent être testés.
+- Les navigateurs doivent être sur HTTPS (ou localhost) pour autoriser GPS et caméra.
+- Le wrapper Android peut nécessiter une adaptation de la gestion HTTP Basic sur Android WebView; tester l’authentification avec APK avant diffusion.
 
-## Vérifications réalisées
-
-- Syntaxe Python compilée (`py_compile`).
-- Syntaxe JS vérifiée (`node --check`).
-- Initialisation DB testée : 0 formulaire au premier démarrage.
-- API dashboard testée sur une base de test vide : 0 soumission et listes vides.
-
-## Limites et sécurité
-
-Cette livraison constitue un projet prêt à démarrer/tester, pas encore une plateforme certifiée de production pour des données de santé identifiantes. Avant l'ouverture publique, intégrer authentification administrateur, RBAC, audit, contrôle anti-abus des formulaires publics, politique de sauvegarde et TLS/HTTPS. La compatibilité XLSForm est partielle pour les fonctionnalités avancées.
-
-
-## Version 0.6.1 — Types GPS et photo dans l’éditeur
-- Ajout des types de question **Géolocalisation GPS** et **Photo / Appareil photo** dans le constructeur visuel.
-- Capture GPS par navigateur avec latitude, longitude et précision, permission explicite du participant.
-- Capture/sélection de photo, aperçu et optimisation JPEG côté client avant envoi.
-- Les types sont aussi rendus dans le formulaire public partagé, sans compte participant.
-- La capture GPS et l’accès caméra requièrent un contexte sécurisé HTTPS (ou localhost).
+Ne pas traiter des données de santé identifiantes en production avant résolution des limites résiduelles et validation par le responsable sécurité/protection des données.
