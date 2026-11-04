@@ -1,0 +1,80 @@
+name: Build CollectPlus APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'android-wrapper/**'
+      - '.github/workflows/build-apk.yml'
+      - 'requirements.txt'
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    name: Compiler l'APK Android
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Récupérer le code source
+        uses: actions/checkout@v7
+
+      - name: Installer Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Installer Java pour Gradle
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Préparer le SDK Android
+        uses: android-actions/setup-android@v4
+
+      - name: Installer les plateformes et outils Android requis
+        shell: bash
+        run: |
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+
+      - name: Installer les dépendances Capacitor
+        working-directory: android-wrapper
+        run: npm install --no-audit --no-fund
+
+      - name: Copier les fichiers web, y compris le formulaire MAPEPI hors ligne
+        working-directory: android-wrapper
+        run: |
+          npm run copy-web
+          test -f www/index.html
+          test -f www/static/app.js
+          test -f www/static/default-forms.json
+
+      - name: Générer le projet Android natif
+        working-directory: android-wrapper
+        run: npx cap add android
+
+      - name: Synchroniser le projet Android
+        working-directory: android-wrapper
+        run: npx cap sync android
+
+      - name: Compiler l'APK de test
+        working-directory: android-wrapper/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Vérifier la présence de l'APK
+        run: test -s android-wrapper/android/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Publier l'APK téléchargeable
+        uses: actions/upload-artifact@v7
+        with:
+          name: CollectPlus-Android-APK
+          path: android-wrapper/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14

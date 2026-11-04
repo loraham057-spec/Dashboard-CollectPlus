@@ -1,0 +1,2 @@
+Déposez ici rdc-provinces.geojson (limites des 26 provinces, ex. geoBoundaries ADM1 de la RDC).
+Le tableau de bord le charge automatiquement et trace les limites en jaune sur la carte satellite.

@@ -1,0 +1,328 @@
+[
+  {
+    "key": "mapepi-incidents-v1",
+    "title": "Fiche d’enregistrement et de suivi d’incident",
+    "short_title": "Incidents MAPEPI",
+    "description": "Déclaration, suivi et clôture des incidents liés au transport et à la traçabilité des échantillons biologiques.",
+    "version": 1,
+    "sections": [
+      {
+        "title": "1. Identification de l’incident",
+        "description": "Renseignez les informations disponibles au moment de la déclaration.",
+        "questions": [
+          {
+            "name": "reference_incident",
+            "label": "Référence de l’incident",
+            "type": "text",
+            "required": true,
+            "placeholder": "Ex. INC-HL-2026-001"
+          },
+          {
+            "name": "numero_epid",
+            "label": "N° EPID",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "date_detection",
+            "label": "Date de détection",
+            "type": "date",
+            "required": true
+          },
+          {
+            "name": "heure_detection",
+            "label": "Heure de détection",
+            "type": "time"
+          },
+          {
+            "name": "date_declaration",
+            "label": "Date de déclaration",
+            "type": "date",
+            "required": true
+          },
+          {
+            "name": "heure_declaration",
+            "label": "Heure de déclaration",
+            "type": "time"
+          },
+          {
+            "name": "province",
+            "label": "Province",
+            "type": "select",
+            "required": true,
+            "options": [
+              "Haut Lomami",
+              "Tanganyika",
+              "Kasaï",
+              "Maniema",
+              "Kinshasa",
+              "Autre"
+            ]
+          },
+          {
+            "name": "zone_sante",
+            "label": "Zone de santé",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "site_prelevement",
+            "label": "Site de prélèvement / aire de santé / structure",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "destination",
+            "label": "Point de destination / laboratoire",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "declare_par",
+            "label": "Déclaré par (nom et fonction)",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "telephone",
+            "label": "Téléphone / contact",
+            "type": "phone"
+          },
+          {
+            "name": "organisation",
+            "label": "Organisation / service",
+            "type": "text"
+          }
+        ]
+      },
+      {
+        "title": "2. Étape du circuit concernée",
+        "description": "Plusieurs réponses sont possibles.",
+        "questions": [
+          {
+            "name": "etapes_circuit",
+            "label": "Étape(s) du circuit",
+            "type": "multiselect",
+            "required": true,
+            "options": [
+              "Transport Communauté/AS vers le BCZ",
+              "Transport BCZ vers l’antenne PEV",
+              "Transport Communauté/AS vers l’antenne PEV",
+              "Transport Antenne PEV vers Chef-Lieu Province ou point de sortie",
+              "Transport Chef-Lieu Province vers Labo",
+              "Réception au BCZ",
+              "Réception à l’antenne PEV",
+              "Réception au laboratoire d’analyse",
+              "Autre"
+            ]
+          },
+          {
+            "name": "autre_etape",
+            "label": "Autre étape (préciser)",
+            "type": "text"
+          }
+        ]
+      },
+      {
+        "title": "3. Type et niveau de l’incident",
+        "description": "Sélectionnez tous les motifs constatés.",
+        "questions": [
+          {
+            "name": "motifs_incident",
+            "label": "Motif(s) de l’incident",
+            "type": "multiselect",
+            "required": true,
+            "options": [
+              "Retard dans la collecte ou l’acheminement de l’échantillon",
+              "Doublon du numéro EPID",
+              "Échantillon mal étiqueté ou non étiqueté",
+              "Échantillon prélevé dans un contenant inapproprié",
+              "Réception d’un seul échantillon de selles au lieu des deux requis (PFA)",
+              "Échantillon non localisé ou perte de traçabilité",
+              "Fiche papier incomplète ou mal renseignée",
+              "Échantillon reçu sans fiche d’accompagnement ou de notification",
+              "Données DHIS2 manquantes ou erronées",
+              "Absence de réseau ou difficulté de synchronisation des données",
+              "Discordance entre la fiche papier et les données du Tracker DHIS2",
+              "Problème de conditionnement ou d’emballage de l’échantillon",
+              "Fuite ou déversement de l’échantillon",
+              "Volume d’échantillon insuffisant",
+              "Non-respect de la chaîne du froid pendant l’acheminement",
+              "Accident de circulation impliquant le transporteur",
+              "Refus de réception de l’échantillon par la structure destinataire",
+              "Indisponibilité du moyen de transport",
+              "Incident lié à la sécurité sur l’itinéraire",
+              "Autre"
+            ]
+          },
+          {
+            "name": "autre_motif",
+            "label": "Autre motif (préciser)",
+            "type": "textarea"
+          },
+          {
+            "name": "maladie_echantillon",
+            "label": "Type de maladie / échantillon concerné",
+            "type": "multiselect",
+            "required": true,
+            "options": [
+              "PFA",
+              "Cas contacts PFA",
+              "Mpox",
+              "Choléra",
+              "Rougeole",
+              "Fièvre jaune",
+              "Fièvres hémorragiques virales"
+            ]
+          }
+        ]
+      },
+      {
+        "title": "4. Impact sur le transport et la traçabilité",
+        "description": "Cochez les conséquences observées ou les risques identifiés.",
+        "questions": [
+          {
+            "name": "impacts",
+            "label": "Impact(s) constaté(s)",
+            "type": "multiselect",
+            "options": [
+              "Aucun impact constaté",
+              "Dépassement du délai recommandé de collecte ou d’acheminement",
+              "Retard dans la transmission au laboratoire destinataire",
+              "Risque de rejet de l’échantillon par le laboratoire",
+              "Altération de la qualité ou de l’intégrité de l’échantillon",
+              "Perte de traçabilité ou interruption du suivi",
+              "Données de suivi incomplètes, manquantes ou erronées",
+              "Exposition accidentelle du personnel à un échantillon biologique",
+              "Risque de contamination du personnel ou de l’environnement",
+              "Rupture de la chaîne du froid pendant l’acheminement",
+              "Nécessité de procéder à un nouveau prélèvement",
+              "Autre"
+            ]
+          },
+          {
+            "name": "autre_impact",
+            "label": "Autre impact (préciser)",
+            "type": "textarea"
+          },
+          {
+            "name": "verification_effectuee",
+            "label": "Vérification avec la fiche papier / le registre / le terrain effectuée ?",
+            "type": "select",
+            "required": true,
+            "options": [
+              "Oui",
+              "Non"
+            ]
+          }
+        ]
+      },
+      {
+        "title": "5. Notification et suivi",
+        "questions": [
+          {
+            "name": "partage_whatsapp",
+            "label": "Incident partagé au groupe WhatsApp de suivi ?",
+            "type": "select",
+            "options": [
+              "Oui",
+              "Non"
+            ]
+          },
+          {
+            "name": "date_partage_whatsapp",
+            "label": "Date du partage",
+            "type": "date"
+          },
+          {
+            "name": "presente_reunion",
+            "label": "Présenté à la réunion hebdomadaire / bi-hebdomadaire ?",
+            "type": "select",
+            "options": [
+              "Oui",
+              "Non"
+            ]
+          },
+          {
+            "name": "date_reunion",
+            "label": "Date de la réunion",
+            "type": "date"
+          }
+        ]
+      },
+      {
+        "title": "6. Mesures immédiates prises",
+        "description": "Saisissez les mesures principales. Le détail peut être complété dans les commentaires.",
+        "questions": [
+          {
+            "name": "mesure_immediate",
+            "label": "Mesure(s) immédiate(s) prise(s)",
+            "type": "textarea",
+            "required": true
+          },
+          {
+            "name": "responsable_mesure",
+            "label": "Responsable",
+            "type": "text"
+          },
+          {
+            "name": "date_heure_mesure",
+            "label": "Date et heure",
+            "type": "datetime"
+          },
+          {
+            "name": "resultat_mesure",
+            "label": "Résultat obtenu",
+            "type": "textarea"
+          }
+        ]
+      },
+      {
+        "title": "7. Mesures correctives et clôture",
+        "questions": [
+          {
+            "name": "action_corrective",
+            "label": "Action corrective / préventive convenue",
+            "type": "textarea",
+            "required": true
+          },
+          {
+            "name": "responsable_action",
+            "label": "Responsable de l’action",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "echeance_action",
+            "label": "Échéance",
+            "type": "date"
+          },
+          {
+            "name": "statut_incident",
+            "label": "Statut de l’incident",
+            "type": "select",
+            "required": true,
+            "options": [
+              "Ouvert",
+              "En cours",
+              "Résolu"
+            ]
+          },
+          {
+            "name": "date_resolution",
+            "label": "Date de résolution",
+            "type": "date"
+          },
+          {
+            "name": "preuve_cloture",
+            "label": "Preuve / commentaire de clôture",
+            "type": "textarea"
+          }
+        ]
+      }
+    ],
+    "id": 1,
+    "created_at": "2026-10-29T00:00:00+00:00",
+    "is_system": true
+  }
+]

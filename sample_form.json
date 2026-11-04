@@ -1,0 +1,17 @@
+{
+  "title": "Enquête de démonstration",
+  "short_title": "Démo terrain",
+  "description": "Exemple de formulaire JSON importable dans CollectPlus.",
+  "sections": [
+    {
+      "title": "Identification",
+      "description": "Informations générales sur la visite.",
+      "questions": [
+        {"name": "code_visite", "label": "Code de la visite", "type": "text", "required": true},
+        {"name": "province", "label": "Province", "type": "select", "required": true, "options": ["Haut Lomami", "Tanganyika", "Kasaï", "Maniema", "Kinshasa"]},
+        {"name": "date_visite", "label": "Date de la visite", "type": "date", "required": true},
+        {"name": "observations", "label": "Observations", "type": "textarea", "required": false}
+      ]
+    }
+  ]
+}

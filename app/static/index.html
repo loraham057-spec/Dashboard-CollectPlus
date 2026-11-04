@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#176b5b">
+  <meta name="description" content="CollectPlus — collecte d’enquêtes et analyse des données de terrain.">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/dashboard.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <title>CollectPlus — Collecte & Analyse</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand-block">
+        <div class="brand-mark"><svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="22" fill="#27b6a5"/><circle cx="24" cy="18" r="5" fill="#fff"/><path d="M14 33c1-6 5-9 10-9s9 3 10 9" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round"/></svg></div>
+        <div><div class="brand-name"><span id="brandName">CollectPlus</span> <small>v0.5.0</small></div><div class="brand-subtitle">Collecter • Analyser • Partager</div></div>
+      </div>
+      <nav class="nav-list" aria-label="Navigation principale">
+        <button class="nav-item active" data-view="dashboard"><i data-i="home"></i><span>Tableau de bord</span></button>
+        <button class="nav-item" data-view="forms"><i data-i="file"></i><span>Formulaires</span></button>
+        <button class="nav-item" data-view="collect"><i data-i="cart"></i><span>Collecte</span><span class="nav-count" id="queueCount">0</span></button>
+        <button class="nav-item" data-view="submissions"><i data-i="list"></i><span>Soumissions</span></button>
+        <button class="nav-item" data-view="reports"><i data-i="chart"></i><span>Analyses</span></button>
+        <button class="nav-item" data-jump="collectMap"><i data-i="pin"></i><span>Cartographie</span></button>
+        <button class="nav-item" data-jump="sharePanel"><i data-i="share"></i><span>Partage public</span><em class="new-badge">Nouveau</em></button>
+        <button class="nav-item" data-view="users"><i data-i="users"></i><span>Utilisateurs</span></button>
+        <button class="nav-item settings-nav" data-view="settings"><i data-i="gear"></i><span>Paramètres</span></button>
+        <button class="nav-item" id="helpNav"><i data-i="help"></i><span>Aide &amp; Support</span></button>
+      </nav>
+      <div class="sidebar-spacer"></div>
+      <div class="offline-card"><div class="offline-heading"><span class="pulse-dot"></span><span id="connectionLabel">Vérification…</span></div><button class="text-button" id="syncNowButton">↻ Synchroniser</button></div>
+      <button class="mobile-card" id="apkCard"><i data-i="phone"></i><span><strong>Collecte mobile</strong><small>Disponible (APK)</small><b>→ Télécharger l’application</b></span></button>
+    </aside>
+
+    <main class="main-area">
+      <header class="topbar">
+        <button class="mobile-menu" id="mobileMenu" aria-label="Ouvrir le menu"><i data-i="menu"></i></button>
+        <label class="search-top"><i data-i="search"></i><input id="globalSearch" placeholder="Rechercher un formulaire, une soumission, un lieu…"></label>
+        <div class="topbar-actions">
+          <div class="connection-pill" id="topConnection"><span class="status-dot"></span><span>…</span></div>
+          <button class="icon-button bell" id="bellButton" aria-label="Notifications"><i data-i="bell"></i><b id="bellCount">0</b></button>
+          <button class="icon-button" id="helpButton" aria-label="À propos"><i data-i="help"></i></button>
+          <div class="user-chip"><div class="avatar" id="userAvatar">BL</div><div><strong id="userName">Berly LORA</strong><small id="userRole">Administrateur</small></div></div>
+        </div>
+        <span id="currentPageLabel" hidden>Tableau de bord</span>
+      </header>
+
+      <div class="content-wrap">
+        <section class="view active" id="view-dashboard">
+          <div class="dash-head">
+            <div><h1>Tableau de bord général</h1><p class="subtitle">Vue d’ensemble des collectes et des soumissions</p></div>
+            <div class="dash-filters">
+              <div class="range-box"><i data-i="cal"></i><input type="date" id="dashStart" aria-label="Début"><span>–</span><input type="date" id="dashEnd" aria-label="Fin"></div>
+              <select id="dashboardProvince" class="select-control"><option value="all">Toutes les provinces</option></select>
+              <select id="dashboardForm" class="select-control"><option value="all">Tous les formulaires</option></select>
+              <button class="refresh-btn" id="dashboardRefresh" aria-label="Actualiser"><i data-i="refresh"></i></button>
+            </div>
+          </div>
+          <div class="kpis" id="kpis"></div>
+          <div class="dash-main">
+            <article class="card c-trend"><h2>Évolution des soumissions</h2><div class="legend"><span><i style="background:#2f6df6"></i>Soumissions</span><span><i style="background:#22c55e"></i>Avec GPS</span></div><div id="submissionTrend"></div></article>
+            <article class="card c-map"><h2>Carte des points de collecte (RDC)</h2><div id="collectMap" class="collect-map"></div><div class="map-legend"><b>Points de collecte</b><span><i style="background:#2f6df6"></i>Soumission récente</span><span><i style="background:#f59e0b"></i>Soumission (7 jours)</span><span><i style="background:#ef4444"></i>Alerte / en retard</span></div></article>
+            <article class="card c-recent"><div class="card-top"><h2>Dernières soumissions</h2><button class="link-button" data-goto="submissions">Voir tout →</button></div><div id="recentList"></div></article>
+            <div class="split-row"><article class="card"><h2>Répartition des soumissions</h2><div id="donut"></div></article><article class="card"><h2>Taux de complétude</h2><div id="gauge"></div></article></div>
+          </div>
+          <div class="actions-row">
+            <button class="act teal" id="actCreate"><i data-i="edit"></i><span><strong>Créer un formulaire</strong>Concevoir un nouveau formulaire depuis l’éditeur</span></button>
+            <button class="act violet" id="actImport"><i data-i="upload"></i><span><strong>Importer un formulaire</strong>XLSForm, Excel, JSON (compatible Kobo)</span></button>
+            <button class="act green" data-jump="sharePanel"><i data-i="share"></i><span><strong>Partager un formulaire <em class="new-badge">Nouveau</em></strong>Générer un lien public ou un QR code (sans compte)</span></button>
+            <button class="act orange" id="actApk"><i data-i="phone"></i><span><strong>Collecte mobile</strong>Télécharger l’APK Android et collecter hors connexion</span></button>
+          </div>
+          <div class="dash-bottom">
+            <article class="card"><div class="card-top"><h2 id="formsTitle">Formulaires</h2><button class="link-button" data-goto="forms">Voir tout →</button></div><div id="formsTable"></div></article>
+            <article class="card"><div class="card-top"><h2>Analyse rapide</h2><select id="quickBy" class="select-control"><option value="province">Par province</option><option value="form">Par formulaire</option><option value="zone">Par zone de santé</option></select></div><div id="quickBars"></div></article>
+            <article class="card" id="sharePanel"><h2>Partage public du formulaire</h2><div id="shareCard"></div></article>
+            <aside class="phone-wrap" aria-label="Aperçu mobile"><div class="phone" id="phone"></div></aside>
+          </div>
+        </section>
+
+        <section class="view" id="view-users"><div class="page-heading"><div><h1>Utilisateurs</h1><p class="subtitle">Comptes de l’équipe (liste informative — l’authentification arrive dans une prochaine version).</p></div></div><div class="panel" id="usersList" style="padding:18px"></div></section>
+
+        <section class="view" id="view-forms">
+          <div class="page-heading"><div><div class="eyebrow">VOTRE BIBLIOTHÈQUE</div><h1>Mes enquêtes</h1><p class="subtitle">Créez, importez et lancez vos questionnaires de terrain.</p></div><div class="heading-actions"><button class="button button-secondary" id="importButton"><span>⇧</span> Importer un formulaire</button><button class="button button-primary" id="createFormButton"><span>＋</span> Créer une enquête</button><input type="file" id="importFile" hidden accept=".json,.xlsx,.xlsm"></div></div>
+          <div class="filter-row"><div class="search-box"><span>⌕</span><input id="formSearch" type="search" placeholder="Rechercher une enquête…"></div><div class="filter-hint" id="formCountLabel">Chargement…</div></div>
+          <div class="forms-grid" id="formsGrid"></div>
+          <div class="empty-state hidden" id="formsEmpty"><div class="empty-icon">▤</div><h3>Aucune enquête trouvée</h3><p>Créez un nouveau questionnaire ou importez un formulaire XLSForm.</p></div>
+          <div class="format-hint"><span class="hint-badge">i</span><div><strong>Formats d’importation</strong><p>Cette version prend en charge les formulaires CollectPlus en JSON et les XLSForm au format Excel (.xlsx). Après importation, vérifiez les listes de choix et les règles avancées qui peuvent nécessiter une adaptation.</p></div></div>
+        </section>
+
+        <section class="view" id="view-collect">
+          <div class="page-heading"><div><div class="eyebrow">SAISIE SUR LE TERRAIN</div><h1>Nouvelle collecte</h1><p class="subtitle">Remplissez un formulaire. Votre réponse sera gardée sur cet appareil si le réseau est indisponible.</p></div><div class="offline-mini" id="collectOfflineBadge"><span class="status-dot"></span>Mode prêt</div></div>
+          <div class="collect-layout"><aside class="collect-picker panel"><h3>Choisir une enquête</h3><p>Sélectionnez le formulaire à remplir.</p><div id="collectFormPicker" class="collect-picker-list"></div><div class="collect-tip"><span>✦</span><div><strong>Astuce terrain</strong><p>Vous pouvez enregistrer vos réponses sans connexion. Pensez à synchroniser dès que le réseau revient.</p></div></div></aside><div class="collect-main" id="collectMain"><div class="empty-collect panel"><div class="empty-icon">＋</div><h3>Prêt pour la collecte ?</h3><p>Choisissez une enquête dans la colonne de gauche pour commencer la saisie.</p><button class="button button-primary" data-goto="forms">Consulter les enquêtes</button></div></div></div>
+        </section>
+
+        <section class="view" id="view-submissions">
+          <div class="page-heading"><div><div class="eyebrow">DONNÉES COLLECTÉES</div><h1>Soumissions</h1><p class="subtitle">Consultez les réponses reçues et exportez les données brutes.</p></div><div class="heading-actions"><button class="button button-secondary" id="submissionCsv">↧ CSV</button><button class="button button-primary" id="submissionXlsx">↧ Excel</button></div></div>
+          <div class="submission-controls"><div class="search-box"><span>⌕</span><input id="submissionSearch" type="search" placeholder="Rechercher par référence, maladie, zone…"></div><select class="select-control" id="submissionFormFilter"><option value="all">Toutes les enquêtes</option></select><button class="button button-secondary small-button" id="refreshSubmissions">↻ Actualiser</button></div>
+          <div class="panel submissions-panel"><div class="table-scroll"><table class="data-table submissions-table"><thead><tr><th>ENQUÊTE</th><th>RÉFÉRENCE / IDENTIFIANT</th><th>PROVINCE / ZONE</th><th>DATE</th><th>STATUT</th><th>ACTION</th></tr></thead><tbody id="submissionsTable"><tr><td colspan="6" class="empty-cell">Chargement des soumissions…</td></tr></tbody></table></div><div class="table-foot" id="submissionFoot">0 soumission</div></div>
+          <div class="format-hint"><span class="hint-badge">i</span><div><strong>Soumissions synchronisées et locales</strong><p>Les soumissions déjà envoyées au serveur sont visibles sur tous les appareils connectés à ce même serveur. Les formulaires enregistrés hors ligne restent dans la file d’attente locale jusqu’à synchronisation.</p></div></div>
+        </section>
+
+        <section class="view" id="view-reports">
+          <div class="page-heading"><div><div class="eyebrow">ANALYSE ET PARTAGE</div><h1>Rapports & exports</h1><p class="subtitle">Choisissez le format de sortie qui convient à votre équipe ou à votre partenaire.</p></div></div>
+          <div class="report-cards">
+            <article class="report-card"><div class="report-card-icon excel-icon">▦</div><div class="report-card-content"><div class="report-tag">DONNÉES BRUTES</div><h2>Exporter vers Excel</h2><p>Un classeur prêt à filtrer, trier et analyser. Les réponses multiples sont regroupées dans une cellule.</p><button class="button button-primary" id="reportXlsx">Télécharger .xlsx <span>↗</span></button></div></article>
+            <article class="report-card"><div class="report-card-icon csv-icon">≡</div><div class="report-card-content"><div class="report-tag">INTEROPÉRABILITÉ</div><h2>Exporter en CSV</h2><p>Format simple à utiliser dans Excel, Power BI, Superset, Python ou un autre outil d’analyse.</p><button class="button button-secondary" id="reportCsv">Télécharger .csv <span>↗</span></button></div></article>
+            <article class="report-card"><div class="report-card-icon pdf-icon">▤</div><div class="report-card-content"><div class="report-tag">PRÉSENTATION</div><h2>Rapport imprimable / PDF</h2><p>Préparez une vue récapitulative de votre tableau de bord, puis choisissez « Enregistrer au format PDF » dans l’impression.</p><button class="button button-secondary" id="reportPdf">Préparer le rapport <span>↗</span></button></div></article>
+            <article class="report-card"><div class="report-card-icon json-icon">{ }</div><div class="report-card-content"><div class="report-tag">SAUVEGARDE</div><h2>Archive JSON</h2><p>Exportez les soumissions avec leurs identifiants, dates et réponses détaillées pour une réutilisation technique.</p><button class="button button-secondary" id="reportJson">Télécharger .json <span>↗</span></button></div></article>
+          </div>
+          <article class="panel report-summary"><div class="panel-heading"><div><h2>Résumé des données disponibles</h2><p>Vue générée à partir des soumissions présentes sur le serveur.</p></div><span class="panel-icon">▥</span></div><div id="reportSummaryStats" class="report-summary-stats"></div></article>
+        </section>
+
+        <section class="view" id="view-settings">
+          <div class="page-heading"><div><div class="eyebrow">CONFIGURATION</div><h1>Paramètres</h1><p class="subtitle">Personnalisez l’apparence et gérez les données de cette installation.</p></div></div>
+          <div class="settings-layout"><div class="panel settings-panel"><div class="panel-heading"><div><h2>Identité de l’espace</h2><p>Ces réglages personnalisent l’interface sur ce navigateur.</p></div></div><form id="settingsForm" class="settings-form"><label>Nom de l’application<input id="settingOrgName" type="text" maxlength="40" placeholder="CollectPlus"></label><label>Couleur principale<div class="color-field"><input id="settingAccent" type="color" value="#176b5b"><span id="accentHex">#176B5B</span></div></label><label>Nom du projet ou de l’organisation<input id="settingProjectName" type="text" maxlength="80" placeholder="Ex. Surveillance numérique"></label><label>Adresse du serveur API (facultatif)<input id="settingApiBase" type="url" placeholder="Ex. https://collectplus.mondomaine.org"><span style="font-size:9px;color:#91a098;font-weight:400">À configurer dans un APK ou si l’interface et le serveur sont hébergés séparément. Laissez vide pour un démarrage local.</span></label><button class="button button-primary" type="submit">Enregistrer les préférences</button></form></div><div class="panel settings-panel"><div class="panel-heading"><div><h2>État de l’installation</h2><p>Informations techniques locales.</p></div></div><div class="system-list"><div><span>Application</span><strong>CollectPlus v0.5.0</strong></div><div><span>Serveur API</span><strong id="settingsApiState">Vérification…</strong></div><div><span>Mode hors ligne</span><strong>Cache de l’interface activé</strong></div><div><span>Base de données</span><strong>SQLite locale</strong></div><div><span>Soumissions en attente sur cet appareil</span><strong id="settingsQueueCount">0</strong></div></div><div class="warning-note"><strong>Avant un déploiement public</strong><p>Activez une authentification, HTTPS, des sauvegardes et une politique de gestion des données personnelles. Cette version est une base de démarrage locale et ne doit pas être exposée directement à Internet avec des données sensibles.</p></div></div></div>
+        </section>
+
+        <section class="view" id="view-builder">
+          <div class="page-heading"><div><div class="eyebrow">CRÉATEUR DE FORMULAIRE</div><h1 id="builderHeading">Créer une enquête</h1><p class="subtitle">Configurez les questions que les enquêteurs verront sur leur téléphone.</p></div><div class="heading-actions"><button class="button button-secondary" id="cancelBuilder">Annuler</button><button class="button button-primary" id="saveFormButton">Enregistrer l’enquête</button></div></div>
+          <div class="builder-layout"><div class="builder-main"><div class="panel builder-meta"><div class="panel-heading"><div><h2>Informations de l’enquête</h2><p>Ce contenu apparaîtra dans la bibliothèque des formulaires.</p></div><span class="step-pill">ÉTAPE 1</span></div><div class="builder-fields two-col"><label>Nom de l’enquête *<input id="builderTitle" required placeholder="Ex. Enquête de supervision"></label><label>Nom court *<input id="builderShortTitle" required maxlength="80" placeholder="Ex. Supervision"></label><label class="wide-field">Description<textarea id="builderDescription" rows="2" placeholder="Décrivez l’objectif du formulaire…"></textarea></label></div></div><div class="panel question-builder"><div class="panel-heading"><div><h2>Questions du formulaire</h2><p>Ajoutez des champs et définissez le type de réponse attendu.</p></div><span class="step-pill" id="questionCountPill">0 QUESTION</span></div><div id="builderQuestions"></div><button class="add-question-button" id="addQuestionButton"><span>＋</span> Ajouter une question</button></div></div><aside class="panel builder-preview"><div class="preview-top"><span class="preview-label">APERÇU MOBILE</span><span class="preview-dot"></span></div><div class="preview-phone"><div class="preview-phone-header"><span>9:41</span><span>● ● ●</span></div><div class="preview-app-header"><span class="preview-logo">C</span><span id="previewShortTitle">Nouvelle enquête</span></div><div class="preview-body"><div class="preview-progress"><span></span></div><div class="preview-section-title" id="previewSectionTitle">Section 1</div><div class="preview-question-label" id="previewQuestionLabel">Votre question apparaîtra ici</div><div class="preview-input"></div><div class="preview-question-label muted-preview">Question suivante</div><div class="preview-input smaller-preview"></div><div class="preview-submit">Enregistrer</div></div></div><p class="preview-caption">Aperçu indicatif du formulaire sur téléphone.</p></aside></div>
+        </section>
+      </div>
+      <footer class="app-footer"><span>CollectPlus <span class="footer-separator">·</span> Collecte intelligente des données</span><span>Vos données, vos analyses, vos décisions.</span></footer>
+    </main>
+  </div>
+  <div class="toast-region" id="toastRegion" aria-live="polite"></div>
+  <div class="modal-backdrop hidden" id="detailModal"><div class="modal-card"><div class="modal-header"><div><div class="eyebrow">DÉTAIL DE LA SOUMISSION</div><h2 id="modalTitle">Soumission</h2></div><button class="icon-button" id="closeModal" aria-label="Fermer">×</button></div><div id="modalBody" class="modal-body"></div><div class="modal-footer"><button class="button button-secondary" id="closeModalFooter">Fermer</button></div></div></div>
+  <div class="modal-backdrop hidden" id="aboutModal"><div class="modal-card about-card"><div class="modal-header"><div><div class="eyebrow">À PROPOS</div><h2>CollectPlus</h2></div><button class="icon-button" id="closeAbout" aria-label="Fermer">×</button></div><p>CollectPlus est une première version fonctionnelle pour créer et importer des formulaires, collecter des données de terrain et consulter les résultats.</p><div class="about-features"><span>✓ Formulaire MAPEPI intégré</span><span>✓ Sauvegarde et synchronisation hors ligne</span><span>✓ Export Excel, CSV et JSON</span><span>✓ Interface web adaptée au mobile</span></div><p class="modal-small-note">Version 0.1.0 — fonctionnement local. Les fonctionnalités avancées et la sécurité de production restent à compléter avant une mise en ligne ouverte.</p><div class="modal-footer"><button class="button button-primary" id="closeAboutFooter">Compris</button></div></div></div>
+  <script src="/static/app.js"></script>
+  <script src="/static/dashboard.js"></script>
+</body>
+</html>
