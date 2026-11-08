@@ -1,0 +1,14 @@
+services:
+  collectplus:
+    build: .
+    container_name: collectplus
+    ports:
+      - "8000:8000"
+    environment:
+      COLLECTPLUS_ADMIN_USERNAME: ${COLLECTPLUS_ADMIN_USERNAME:?Definissez COLLECTPLUS_ADMIN_USERNAME dans .env}
+      COLLECTPLUS_ADMIN_PASSWORD: ${COLLECTPLUS_ADMIN_PASSWORD:?Definissez COLLECTPLUS_ADMIN_PASSWORD dans .env}
+      COLLECTPLUS_ALLOWED_ORIGINS: ${COLLECTPLUS_ALLOWED_ORIGINS:-}
+      COLLECTPLUS_PUBLIC_BASE_URL: ${COLLECTPLUS_PUBLIC_BASE_URL:-}
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

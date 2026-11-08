@@ -1,0 +1,13 @@
+{
+  "name": "CollectPlus — Collecte & Analyse",
+  "short_name": "CollectPlus",
+  "description": "Collecte d’enquêtes et analyse des données de terrain.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#eef4fc",
+  "theme_color": "#0796a4",
+  "icons": [
+    {"src": "/static/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}
+  ]
+}
