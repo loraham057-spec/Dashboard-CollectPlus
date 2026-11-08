@@ -11,7 +11,7 @@
     forms: [], submissions: [], dashboard: null, view: 'dashboard', selectedFormId: null,
     builderQuestions: [], builderMode: 'create', selectedSubmissionForm: 'all', builderShortManual: false
   };
-  const pageLabels = {dashboard:'Vue d’ensemble', forms:'Mes enquêtes', collect:'Nouvelle collecte', submissions:'Soumissions', reports:'Rapports & exports', settings:'Paramètres', builder:'Créer une enquête'};
+  const pageLabels = {dashboard:'Vue d’ensemble', forms:'Mes enquêtes', collect:'Nouvelle collecte', submissions:'Soumissions', reports:'Rapports & exports', settings:'Paramètres', builder:'Créer une enquête', projects:'Projets & enquêtes', users:'Utilisateurs & rôles', sharing:'Partage & accès'};
 
   function readLS(key, fallback) {
     try { const value = localStorage.getItem(key); return value ? JSON.parse(value) : fallback; }
@@ -179,6 +179,9 @@
     if (view === 'collect') renderCollectPicker();
     if (view === 'submissions') loadSubmissions();
     if (view === 'reports') { loadSubmissions().then(renderReportSummary); }
+    if (view === 'projects') cpRenderProjects();
+    if (view === 'users') cpRenderUsers();
+    if (view === 'sharing') cpRenderSharing();
     if (view === 'settings') { applySettings(); checkApiStatus(); }
     window.scrollTo({top:0, behavior:'smooth'});
   }
@@ -191,6 +194,9 @@
     $('#closeAboutFooter').addEventListener('click', closeAbout);
     $('#aboutModal').addEventListener('click', e => { if (e.target.id === 'aboutModal') closeAbout(); });
     $('#syncNowButton').addEventListener('click', syncQueue);
+    $('#createProjectBtn')?.addEventListener('click', cpCreateProject);
+    $('#createUserBtn')?.addEventListener('click', cpCreateUser);
+    $('#shareProjectForm')?.addEventListener('submit', cpGrantAccess);
   }
   function closeAbout() { $('#aboutModal').classList.add('hidden'); }
 

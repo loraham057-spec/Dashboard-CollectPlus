@@ -1,6 +1,6 @@
-# CollectPlus v0.7.1 — Revue sécurité et rafraîchissement du dashboard
+# CollectPlus v0.8.0 — Dashboard étendu et espace collaboratif (prototype local)
 
-CollectPlus est une application de collecte et d’analyse de formulaires terrain (FastAPI, SQLite, SPA/PWA et wrapper Capacitor Android). Cette livraison reprend la version 0.6.2 et ajoute un premier niveau de protections côté API et des tests automatisés. Le design de dashboard existant est conservé.
+CollectPlus est une application de collecte et d’analyse de formulaires terrain (FastAPI, SQLite, SPA/PWA et wrapper Capacitor Android). Cette livraison reprend la version 0.6.2 et ajoute un premier niveau de protections côté API et des tests automatisés. Cette version ajoute des vues Projets, Utilisateurs & rôles et Partage & accès, alignées sur le visuel cible. Les nouvelles données collaboratives sont persistées dans le stockage local du navigateur et ne constituent pas encore un système de comptes serveur multi-utilisateurs.
 
 ## Changements v0.7.1\n\n- Refonte de la palette visuelle du tableau de bord : sidebar bleu nuit, surfaces bleu clair, accents turquoise/bleu/violet/orange/vert maîtrisés.\n- KPI et cartes rehaussés (hiérarchie typographique, ombres légères, coins arrondis, états hover).\n- Filtres dashboard harmonisés et mise en page responsive pour écrans intermédiaires et mobiles.\n- Ajustement de la hauteur de la carte et styles de la zone cartographique.\n- Les formulaires et soumissions restent issus des données réelles; aucun questionnaire ni indicateur fictif ajouté.\n- Les fonctionnalités GPS, photo, collecte hors ligne, API, partage public et wrapper Android sont conservés.\n\n## Changements v0.7.0
 
@@ -84,3 +84,20 @@ Par défaut, sauvegarde `data/collectplus.db` vers `data/backups`, vérifie `PRA
 - Le wrapper Android peut nécessiter une adaptation de la gestion HTTP Basic sur Android WebView; tester l’authentification avec APK avant diffusion.
 
 Ne pas traiter des données de santé identifiantes en production avant résolution des limites résiduelles et validation par le responsable sécurité/protection des données.
+
+
+## Changements v0.8.0
+- Ajout de vues navigationnelles dédiées aux projets, utilisateurs & rôles et partage/permissions.
+- Création locale de projets avec nom, description, statut et date.
+- Ajout local d'utilisateurs avec validation d'e-mail et choix de rôle (admin, analyst, collector, viewer).
+- Attribution et révocation locale des accès projet avec niveaux de permission.
+- Dashboard/navigation enrichis et styles professionnels cohérents avec la référence.
+- Les écrans de collaboration stockent leurs données en localStorage du navigateur.
+
+## Limitation importante — production
+Les comptes, invitations, rôles et permissions v0.8.0 ci-dessus sont une interface prototype locale : ils ne sont ni synchronisés entre appareils, ni une couche d'autorisation backend. Ne pas utiliser pour des données sensibles de santé ni présenter le partage comme sécurisé entre utilisateurs avant l'implémentation d'une authentification serveur (sessions, hash de mots de passe, RBAC appliqué à chaque endpoint, invitations vérifiées, journal d'audit, contrôle d'accès objet, stockage partagé sécurisé et tests de sécurité). Le socle API existant conserve son authentification administrateur commune.
+
+## Validation effectuée
+- `node --check app/static/app.js` : réussi.
+- `python -m py_compile app/main.py` : réussi.
+- Le wrapper Capacitor et workflow GitHub Actions APK existants ont été conservés ; aucune compilation APK signée sur appareil n'a été exécutée dans cette livraison.
