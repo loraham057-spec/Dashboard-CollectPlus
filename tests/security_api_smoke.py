@@ -1,106 +1,137 @@
-import base64, json, io, urllib.error, urllib.request
-from openpyxl import Workbook
-from PIL import Image
-import os
-BASE=os.getenv('COLLECTPLUS_TEST_BASE','http://127.0.0.1:8000')
-AUTH='Basic '+base64.b64encode(b'ci-admin:ci-password-test-only').decode()
-def req(path, method='GET', data=None, auth=True):
-    headers={'Content-Type':'application/json'}
-    if auth is True: headers['Authorization']=AUTH
-    elif isinstance(auth,str): headers['Authorization']=auth
-    body=None if data is None else json.dumps(data).encode()
-    request=urllib.request.Request(BASE+path,data=body,headers=headers,method=method)
-    try:
-        with urllib.request.urlopen(request) as r: return r.status, r.read()
-    except urllib.error.HTTPError as e: return e.code,e.read()
-# Health endpoint remains public; admin APIs require credentials.
-assert req('/api/health',auth=False)[0] == 200
-assert req('/api/forms',auth=False)[0] == 401
-assert req('/api/forms',auth='Basic '+base64.b64encode(b'ci-admin:wrong-password').decode())[0] == 401
-assert req('/',auth=False)[0] == 401
-assert req('/api/forms',auth=True)[0] == 200
-# The visual editor exposes GPS and camera/image answer types in its select menu.
-frontend=__import__('pathlib').Path(__file__).resolve().parents[1].joinpath('app/static/app.js').read_text(encoding='utf-8')
-assert "['geopoint','Géolocalisation GPS']" in frontend
-assert "['image','Photo / Appareil photo']" in frontend
-html=__import__('pathlib').Path(__file__).resolve().parents[1].joinpath('app/static/index.html').read_text(encoding='utf-8')
-assert 'id="globalSearch"' in html and 'class="cp-quick-actions"' in html
-assert json.loads(req('/api/forms')[1]) == []
-root_request=urllib.request.Request(BASE+'/',headers={'Authorization':AUTH})
-with urllib.request.urlopen(root_request) as root_response:
-    assert root_response.status==200
-    assert root_response.headers.get('Content-Security-Policy')
-    assert root_response.headers.get('X-Content-Type-Options')=='nosniff'
-# Schema validation prevents duplicate fields and disallowed types.
-bad={'title':'Test form','short_title':'Test','description':'','sections':[{'title':'Sec','questions':[{'name':'q1','label':'Question 1','type':'text'},{'name':'q1','label':'Question 2','type':'text'}]}]}
-assert req('/api/forms','POST',bad)[0] == 400
-schema={'title':'Survey security test','short_title':'Security','description':'','sections':[{'title':'Terrain','questions':[{'name':'person_name','label':'Nom','type':'text','required':True},{'name':'gps_point','label':'GPS','type':'geopoint','required':True},{'name':'site_photo','label':'Photo','type':'image','required':False},{'name':'choice','label':'Choix','type':'select','options':['A','B'],'required':False}]}]}
-status,raw=req('/api/forms','POST',schema); assert status==200,(status,raw)
-form=json.loads(raw); fid=form['id']
-status,raw=req(f'/api/forms/{fid}/share','POST',{}); assert status==200,(status,raw)
-share=json.loads(raw); token=share['token']
-assert req(f'/api/public/{token}/form',auth=False)[0]==200
-qr_status, qr_bytes = req(f'/api/forms/{fid}/share/{token}/qr.png')
-assert qr_status == 200 and qr_bytes.startswith(b'\x89PNG\r\n\x1a\n'), (qr_status, qr_bytes[:20])
-# Required fields, GPS bounds, option membership and unknown field are validated server-side.
-assert req(f'/api/public/{token}/submissions','POST',{'data':{'person_name':'Berly'}} ,auth=False)[0]==422
-assert req(f'/api/public/{token}/submissions','POST',{'data':{'person_name':'B','gps_point':{'latitude':99,'longitude':15,'accuracy':10}}},auth=False)[0]==422
-assert req(f'/api/public/{token}/submissions','POST',{'data':{'person_name':'B','gps_point':{'latitude':-4.3,'longitude':15.3,'accuracy':5},'choice':'X'}},auth=False)[0]==422
-# Known valid sample image (tiny JPEG header bytes) plus valid coordinates.\n# Ensure the validator confirms signature, bounded size, and expected fields.
-image_buffer=io.BytesIO()
-Image.new('RGB',(2,2),(40,120,90)).save(image_buffer,format='JPEG')
-image='data:image/jpeg;base64,'+base64.b64encode(image_buffer.getvalue()).decode()
-valid={'data':{'person_name':'Berly','gps_point':{'latitude':-4.3,'longitude':15.3,'accuracy':5},'site_photo':image,'choice':'A'}}
-status,raw=req(f'/api/public/{token}/submissions','POST',valid,auth=False); assert status==200,(status,raw)
-# CSV export neutralizes spreadsheet formulas in user-provided strings.
-formula_data={'data':{'person_name':'=1+1','gps_point':{'latitude':-4.3,'longitude':15.3,'accuracy':5},'choice':'A'}}
-assert req(f'/api/public/{token}/submissions','POST',formula_data,auth=False)[0]==200
-export_status, export_bytes=req('/api/export/csv')
-assert export_status==200 and b"'=1+1" in export_bytes, export_bytes[:300]
-xlsx_status,xlsx_export=req('/api/export/xlsx')
-assert xlsx_status==200
+"""Tests de bout en bout sur un serveur réel (uvicorn) : contrôle d'accès, rôles, validation, exports, limites.
+
+Lancement (voir .github/workflows/collectplus-ci.yml) : python tests/security_api_smoke.py
+Les tests de blocage (429) sont exécutés en dernier : ils verrouillent volontairement l'IP de test.
+"""
+import base64, http.client, io, json, os, urllib.error, urllib.request
+from urllib.parse import urlparse
 from openpyxl import load_workbook
-export_wb=load_workbook(io.BytesIO(xlsx_export),data_only=False)
-export_ws=export_wb.active
-headers=[c.value for c in export_ws[1]]
-formula_col=headers.index('person_name')+1
-assert any(export_ws.cell(row,formula_col).value=="'=1+1" for row in range(2,export_ws.max_row+1))
-# Admin export endpoint must remain protected.
-assert req('/api/export/csv',auth=False)[0]==401
-# Anonymous public submissions are throttled after a per-IP fixed-window threshold.
-rate_status=200
-for _ in range(20):
-    rate_status,_=req(f'/api/public/{token}/submissions','POST',{'data':{'person_name':'R','gps_point':{'latitude':-4.3,'longitude':15.3,'accuracy':5}}},auth=False)
-    if rate_status==429: break
-assert rate_status==429, f'Rate limit did not trigger, last status={rate_status}'
-# XLSForm import keeps native GPS and photo types in the editor schema.
-wb=Workbook(); ws=wb.active; ws.title='survey'
-ws.append(['type','name','label','required'])
-ws.append(['text','respondent','Nom','yes']); ws.append(['geopoint','geo','GPS','yes']); ws.append(['image','photo','Photo','no'])
-xlsx=io.BytesIO(); wb.save(xlsx); xlsx_bytes=xlsx.getvalue()
-boundary='CollectPlusTestBoundary'; body=(b'--'+boundary.encode()+b'\r\nContent-Disposition: form-data; name="file"; filename="survey.xlsx"\r\nContent-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\r\n\r\n'+xlsx_bytes+b'\r\n--'+boundary.encode()+b'--\r\n')
-request=urllib.request.Request(BASE+'/api/forms/import',data=body,headers={'Authorization':AUTH,'Content-Type':'multipart/form-data; boundary='+boundary},method='POST')
-with urllib.request.urlopen(request) as response: imported=json.loads(response.read())
-imported_types=[q['type'] for sec in imported['sections'] for q in sec['questions']]
-assert imported_types==['text','geopoint','image'], imported_types
-# Upload size cap returns 413 before parsing a too-large workbook.
-large_payload=b'0'*(5*1024*1024+1)
-boundary2='CollectPlusLargeBoundary'; large_body=(b'--'+boundary2.encode()+b'\r\nContent-Disposition: form-data; name="file"; filename="oversized.xlsx"\r\nContent-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\r\n\r\n'+large_payload+b'\r\n--'+boundary2.encode()+b'--\r\n')
-large_req=urllib.request.Request(BASE+'/api/forms/import',data=large_body,headers={'Authorization':AUTH,'Content-Type':'multipart/form-data; boundary='+boundary2},method='POST')
-try:
-    urllib.request.urlopen(large_req)
-    raise AssertionError('Oversized upload was accepted')
-except urllib.error.HTTPError as error:
-    assert error.code==413, error.code
-# A form with no submissions can be deleted safely even when share tokens exist.
-delete_schema={'title':'Temporary form','short_title':'Temp','description':'','sections':[{'title':'S','questions':[{'name':'temporary_field','label':'Temporary','type':'text','required':False}]}]}
-status,delete_raw=req('/api/forms','POST',delete_schema); assert status==200
-delete_form_id=json.loads(delete_raw)['id']
-status,delete_share_raw=req(f'/api/forms/{delete_form_id}/share','POST',{}); assert status==200
-delete_token=json.loads(delete_share_raw)['token']
-assert req(f'/api/forms/{delete_form_id}','DELETE')[0]==200
-assert req(f'/api/public/{delete_token}/form',auth=False)[0]==404
-# Public link revocation disables further form access.
-assert req(f'/api/forms/{fid}/share/revoke','POST',{})[0]==200
-assert req(f'/api/public/{token}/form',auth=False)[0]==404
-print('PASS: admin auth, security headers, editor GPS/photo option, schema and response validation, image decoding, XLSForm import, local QR, CSV/XLSX formula mitigation, upload size cap, throttling, form deletion and link revocation.')
+from PIL import Image
+
+BASE = os.getenv("COLLECTPLUS_TEST_BASE", "http://127.0.0.1:8000")
+basic = lambda u, p: "Basic " + base64.b64encode(f"{u}:{p}".encode()).decode()
+ADMIN, COLLECTOR = basic("ci-admin", "ci-password-test-only"), basic("ci-collector", "ci-collector-test-only")
+
+
+def req(path, method="GET", data=None, auth=ADMIN, raw_headers=None):
+    headers = {"Content-Type": "application/json", "X-Requested-With": "CollectPlus"}
+    if auth:
+        headers["Authorization"] = auth
+    headers.update(raw_headers or {})
+    r = urllib.request.Request(BASE + path, data=None if data is None else json.dumps(data).encode(), headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(r) as resp:
+            return resp.status, resp.read(), resp.headers
+    except urllib.error.HTTPError as e:
+        return e.code, e.read(), e.headers
+
+
+def ok(label, cond, extra=""):
+    print(("PASS " if cond else "FAIL ") + label + ("" if cond else f"  -> {extra}"))
+    assert cond, (label, extra)
+
+
+# --- Accès : public / administrateur / collecteur
+ok("health public", req("/api/health", auth=None)[0] == 200)
+s, _, h = req("/api/forms", auth=None)
+ok("API sans identifiants -> 401", s == 401)
+ok("les réponses d'erreur portent les en-têtes de sécurité", bool(h.get("Content-Security-Policy")) and h.get("X-Content-Type-Options") == "nosniff", dict(h))
+ok("CSP stricte (pas de script/style en ligne)", "'unsafe-inline'" not in h.get("Content-Security-Policy", ""))
+ok("page d'accueil protégée", req("/", auth=None)[0] == 401)
+ok("mot de passe faux -> 401", req("/api/forms", auth=basic("ci-admin", "faux"))[0] == 401)
+ok("mot de passe avec accents -> 401 (et non 500)", req("/api/forms", auth=basic("ci-admin", "é€ü"))[0] == 401)
+ok("admin autorisé", req("/api/forms")[0] == 200 and req("/api/whoami")[0] == 200)
+ok("collecteur : liste des formulaires autorisée", req("/api/forms", auth=COLLECTOR)[0] == 200)
+ok("collecteur : statistiques refusées (403)", req("/api/stats", auth=COLLECTOR)[0] == 403)
+ok("collecteur : exports refusés (403)", req("/api/export/csv", auth=COLLECTOR)[0] == 403)
+ok("collecteur : journal d'audit refusé (403)", req("/api/audit", auth=COLLECTOR)[0] == 403)
+
+# --- CSRF : une requête modifiante sans l'en-tête personnalisé est refusée
+s, _, _ = req("/api/forms", "POST", schema_probe := {"title": "x", "short_title": "x", "sections": []}, raw_headers={"X-Requested-With": ""})
+ok("requête modifiante sans en-tête CSRF -> 403", s == 403, s)
+
+# --- Formulaires
+dup = {"title": "Doublons", "short_title": "Dup", "description": "", "sections": [{"title": "S", "questions": [
+    {"name": "q1", "label": "A", "type": "text"}, {"name": "q1", "label": "B", "type": "text"}]}]}
+ok("noms de question dupliqués refusés", req("/api/forms", "POST", dup)[0] == 400)
+schema = {"title": "Enquête de test sécurité", "short_title": "Sécurité", "description": "", "sections": [{"title": "Terrain", "questions": [
+    {"name": "person_name", "label": "Nom", "type": "text", "required": True},
+    {"name": "province", "label": "Province", "type": "select", "options": ["Maniema", "Kasaï"]},
+    {"name": "zone_sante", "label": "Zone de santé", "type": "text"},
+    {"name": "gps_point", "label": "GPS", "type": "geopoint"}, {"name": "site_photo", "label": "Photo", "type": "image"},
+    {"name": "visite", "label": "Date de visite", "type": "date"}]}]}
+s, raw, _ = req("/api/forms", "POST", schema)
+ok("création de formulaire", s == 200, raw)
+form = json.loads(raw)
+fid = form["id"]
+ok("un nouveau formulaire est un brouillon", form["status"] == "draft")
+ok("brouillon invisible du collecteur", all(f["id"] != fid for f in json.loads(req("/api/forms", auth=COLLECTOR)[1])))
+ok("collecteur ne peut pas soumettre sur un brouillon", req("/api/submissions", "POST", {"form_id": fid, "data": {"person_name": "X"}}, auth=COLLECTOR)[0] == 404)
+s, raw, _ = req(f"/api/forms/{fid}/share", "POST", {})
+ok("création du lien public", s == 200, raw)
+token = json.loads(raw)["token"]
+ok("le partage publie le formulaire", json.loads(req(f"/api/forms/{fid}")[1])["status"] == "published")
+ok("formulaire public lisible sans identifiants", req(f"/api/public/{token}/form", auth=None)[0] == 200)
+s, qr, _ = req(f"/api/forms/{fid}/share/{token}/qr.png")
+ok("QR code PNG", s == 200 and qr.startswith(b"\x89PNG"))
+
+# --- Validation serveur
+pub = lambda d: req(f"/api/public/{token}/submissions", "POST", {"data": d}, auth=None)
+ok("champ obligatoire manquant -> 422", pub({"province": "Maniema"})[0] == 422)
+ok("GPS hors limites -> 422", pub({"person_name": "B", "gps_point": {"latitude": 99, "longitude": 15, "accuracy": 5}})[0] == 422)
+ok("choix invalide -> 422", pub({"person_name": "B", "province": "Mars"})[0] == 422)
+ok("date invalide -> 422", pub({"person_name": "B", "visite": "31/12/2024"})[0] == 422)
+ok("champ inconnu -> 422", pub({"person_name": "B", "intrus": 1})[0] == 422)
+ok("image au contenu falsifié -> 422", pub({"person_name": "B", "site_photo": "data:image/jpeg;base64," + base64.b64encode(b"pas une image").decode()})[0] == 422)
+buf = io.BytesIO(); Image.new("RGB", (4, 4), (40, 120, 90)).save(buf, "JPEG")
+img = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+s, raw, _ = pub({"person_name": "Berly", "province": "Maniema", "zone_sante": "Kamina", "gps_point": {"latitude": -4.3, "longitude": 15.3, "accuracy": 5}, "site_photo": img, "visite": "2024-11-12"})
+ok("soumission valide avec photo", s == 200, raw)
+ok("soumission avec formule", pub({"person_name": "=1+1", "province": "Kasaï"})[0] == 200)
+
+# --- Lecture, pièces jointes, statistiques, exports
+s, raw, _ = req(f"/api/submissions?form_id={fid}")
+listing = json.loads(raw)
+ok("liste paginée légère (aucune image en base64)", s == 200 and listing["total"] == 2 and b"base64" not in raw)
+photo_sub = next(i for i in listing["items"] if "site_photo" in i["data"])
+s, jpg, h = req("/api/attachments/" + photo_sub["data"]["site_photo"]["attachment"])
+ok("pièce jointe servie avec le bon type", s == 200 and jpg[:3] == b"\xff\xd8\xff" and h.get("Content-Type") == "image/jpeg")
+ok("pièce jointe : id invalide -> 404", req("/api/attachments/../../etc/passwd")[0] == 404)
+st = json.loads(req("/api/stats")[1])
+ok("statistiques : structure et valeurs", st["kpis"]["submissions"] >= 2 and st["kpis"]["gps"] >= 1 and len(st["trend"]) == 30 and "provinces" in st["options"])
+ok("statistiques : période invalide -> 422", req("/api/stats?date_from=pas-une-date")[0] == 422)
+ok("statistiques d'un formulaire", req(f"/api/forms/{fid}/stats")[0] == 200)
+s, csv_bytes, _ = req("/api/export/csv")
+ok("CSV : formule neutralisée, photo exclue", s == 200 and b"'=1+1" in csv_bytes and b"base64" not in csv_bytes, csv_bytes[:200])
+s, xlsx, _ = req("/api/export/xlsx")
+ws = load_workbook(io.BytesIO(xlsx)).active
+ok("XLSX valide", s == 200 and ws.max_row >= 3)
+ok("export JSON", req("/api/export/json")[0] == 200)
+audit = json.loads(req("/api/audit")[1])
+ok("journal d'audit renseigné", {"form.create", "link.create", "export.csv"} <= {a["action"] for a in audit})
+ok("api/system", json.loads(req("/api/system")[1])["security"]["collector_account"] is True)
+
+# --- Collecte par compte collecteur (nom d'enquêteur encodé)
+s, raw, _ = req("/api/submissions", "POST", {"id": "ci-sub-1", "form_key": form["key"], "data": {"person_name": "Collecteur"}}, auth=COLLECTOR, raw_headers={"X-Collector": "Awa%20Kasongo"})
+ok("collecteur : soumission par form_key", s == 200, raw)
+ok("soumission rejouée = idempotente", json.loads(req("/api/submissions", "POST", {"id": "ci-sub-1", "form_key": form["key"], "data": {"person_name": "Collecteur"}}, auth=COLLECTOR)[1]).get("duplicate") is True)
+ok("enquêteur identifié", any(c["name"] == "Awa Kasongo" for c in json.loads(req("/api/collectors")[1])))
+
+# --- Cycle de vie
+ok("suppression refusée si des soumissions existent", req(f"/api/forms/{fid}", "DELETE")[0] == 409)
+ok("révocation du lien", req(f"/api/links/{token}/revoke", "POST", {})[0] == 200)
+ok("lien révoqué -> 404", req(f"/api/public/{token}/form", auth=None)[0] == 404)
+ok("dépublication", req(f"/api/forms/{fid}/unpublish", "POST", {})[0] == 200)
+
+# --- Blocages (en dernier : verrouillent l'IP de test)
+p = urlparse(BASE)
+conn = http.client.HTTPConnection(p.hostname, p.port)
+conn.request("POST", "/api/submissions", body=iter([b"{}"]), headers={"Authorization": ADMIN, "Content-Type": "application/json", "Transfer-Encoding": "chunked"}, encode_chunked=True)
+ok("corps chunked sans Content-Length -> 411", conn.getresponse().status == 411)
+s2, raw2, _ = req("/api/forms", "POST", schema)
+token2 = json.loads(req(f"/api/forms/{json.loads(raw2)['id']}/share", "POST", {})[1])["token"]
+codes = [req(f"/api/public/{token2}/submissions", "POST", {"data": {"person_name": "x"}}, auth=None)[0] for _ in range(16)]
+ok("limitation de débit publique -> 429", 429 in codes and codes[0] == 200, codes)
+codes = [req("/api/forms", auth=basic("ci-admin", f"x{i}"))[0] for i in range(11)]
+ok("verrouillage après tentatives échouées -> 429", codes[-1] == 429, codes)
+print("\nTous les contrôles API sont passés.")
