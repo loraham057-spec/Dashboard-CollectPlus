@@ -11,7 +11,7 @@
     forms: [], submissions: [], dashboard: null, view: 'dashboard', selectedFormId: null,
     builderQuestions: [], builderMode: 'create', selectedSubmissionForm: 'all', builderShortManual: false
   };
-  const pageLabels = {dashboard:'Vue d’ensemble', forms:'Mes enquêtes', collect:'Nouvelle collecte', submissions:'Soumissions', reports:'Rapports & exports', settings:'Paramètres', builder:'Créer une enquête', projects:'Projets & enquêtes', users:'Utilisateurs & rôles', sharing:'Partage & accès'};
+  const pageLabels = {dashboard:'Vue d’ensemble', forms:'Mes enquêtes', collect:'Nouvelle collecte', submissions:'Soumissions', reports:'Rapports & exports', settings:'Paramètres', builder:'Créer une enquête', projects:'Projets & enquêtes', users:'Utilisateurs & rôles', sharing:'Partage & accès', elearning:'Formation e-learning'};
 
   function readLS(key, fallback) {
     try { const value = localStorage.getItem(key); return value ? JSON.parse(value) : fallback; }
@@ -182,6 +182,7 @@
     if (view === 'projects') cpRenderProjects();
     if (view === 'users') cpRenderUsers();
     if (view === 'sharing') cpRenderSharing();
+    if (view === 'elearning') learningRender();
     if (view === 'settings') { applySettings(); checkApiStatus(); }
     window.scrollTo({top:0, behavior:'smooth'});
   }
@@ -197,6 +198,7 @@
     $('#createProjectBtn')?.addEventListener('click', cpCreateProject);
     $('#createUserBtn')?.addEventListener('click', cpCreateUser);
     $('#shareProjectForm')?.addEventListener('submit', cpGrantAccess);
+    learningBind();
   }
   function closeAbout() { $('#aboutModal').classList.add('hidden'); }
 
@@ -767,6 +769,33 @@
     updateQueueIndicators();
   }
 
+  // E-learning space: course authoring, local course library, reader and progress tracking.
+  const LEARNING_COURSES_KEY = 'collectplus_learning_courses_v1';
+  const LEARNING_PROGRESS_KEY = 'collectplus_learning_progress_v1';
+  let learningCurrentCourseId = null;
+  function learningCourses(){const rows=readLS(LEARNING_COURSES_KEY,[]);return Array.isArray(rows)?rows:[];}
+  function learningProgress(){const rows=readLS(LEARNING_PROGRESS_KEY,[]);return Array.isArray(rows)?rows:[];}
+  function learningRender(){
+    const courses=learningCourses(), progress=learningProgress();
+    const search=($('#learningSearch')?.value||'').trim().toLowerCase(), category=$('#learningCategoryFilter')?.value||'all';
+    const filtered=courses.filter(c=>(category==='all'||c.category===category)&&`${c.title} ${c.description} ${c.category}`.toLowerCase().includes(search));
+    $('#learningCount').textContent=String(courses.length);
+    $('#learningStats').innerHTML=`<article class="learning-stat"><span class="learning-stat-icon teal">▧</span><div><strong>${courses.length}</strong><span>Modules disponibles</span></div></article><article class="learning-stat"><span class="learning-stat-icon blue">✓</span><div><strong>${progress.length}</strong><span>Modules terminés</span></div></article><article class="learning-stat"><span class="learning-stat-icon purple">◷</span><div><strong>${courses.filter(c=>!progress.includes(c.id)).length}</strong><span>À poursuivre</span></div></article>`;
+    $('#learningCourseGrid').innerHTML=filtered.map(c=>`<article class="learning-course-card"><div class="learning-course-top"><span class="learning-category-chip">${escapeHtml(c.category||'CollectPlus')}</span><span class="learning-level">${escapeHtml(c.level||'Débutant')}</span></div><div class="learning-course-icon">▧</div><h3>${escapeHtml(c.title)}</h3><p>${escapeHtml(c.description)}</p><div class="learning-course-meta"><span>◷ ${escapeHtml(c.duration||'Durée libre')}</span><span>${progress.includes(c.id)?'<span class="learning-done">✓ Terminé</span>':'<span class="learning-pending">À suivre</span>'}</span></div><button class="button button-primary learning-open" data-learning-open="${escapeHtml(c.id)}">${progress.includes(c.id)?'Revoir le module':'Commencer la formation'} <span>→</span></button></article>`).join('');
+    $('#learningEmpty').classList.toggle('hidden',filtered.length>0);
+    $('#learningProgress').innerHTML=courses.length?`<div class="learning-progress-number">${courses.length?Math.round(progress.filter(id=>courses.some(c=>c.id===id)).length/courses.length*100):0}%</div><div class="learning-progress-track"><span style="width:${courses.length?Math.round(progress.filter(id=>courses.some(c=>c.id===id)).length/courses.length*100):0}%"></span></div><p>${progress.filter(id=>courses.some(c=>c.id===id)).length} sur ${courses.length} modules terminés</p><div class="learning-progress-list">${courses.slice(0,5).map(c=>`<div><span>${escapeHtml(c.title)}</span><b>${progress.includes(c.id)?'✓':'○'}</b></div>`).join('')}</div>`:'<div class="cp-empty">Votre progression apparaîtra ici après le démarrage d’un module.</div>';
+    $$('[data-learning-open]').forEach(btn=>btn.addEventListener('click',()=>learningOpen(btn.dataset.learningOpen)));
+  }
+  function learningShowEditor(show){$('#learningEditor').classList.toggle('hidden',!show);if(show){$('#learningTitle').focus();$('#learningEditor').scrollIntoView({behavior:'smooth',block:'start'});}}
+  function learningOpen(id){const course=learningCourses().find(c=>c.id===id);if(!course)return;learningCurrentCourseId=id;$('#learningReaderTitle').textContent=course.title;$('#learningReaderMeta').textContent=`${course.category||'CollectPlus'} · ${course.level||'Débutant'} · ${course.duration||'Durée libre'}`;$('#learningReaderDescription').textContent=course.description;$('#learningReaderContent').textContent=course.content;$('#learningResource').innerHTML='';if(course.url){const u=escapeHtml(course.url);$('#learningResource').innerHTML=`<p class="learning-resource"><a href="${u}" target="_blank" rel="noopener noreferrer">Ouvrir la vidéo / ressource externe ↗</a></p>`;}if(course.attachment?.data){const a=course.attachment;$('#learningResource').innerHTML+=`<p class="learning-resource"><a download="${escapeHtml(a.name)}" href="${a.data}">Télécharger le support : ${escapeHtml(a.name)} ↧</a></p>`;}const done=learningProgress().includes(id);$('#learningMarkComplete').textContent=done?'✓ Module terminé':'✓ Marquer comme terminé';$('#learningMarkComplete').disabled=done;$('#learningReader').classList.remove('hidden');$('#learningEditor').classList.add('hidden');$('#learningReader').scrollIntoView({behavior:'smooth',block:'start'});}
+  function learningBind(){
+    $('#learningAddBtn')?.addEventListener('click',()=>learningShowEditor(true));$('#learningEmptyAdd')?.addEventListener('click',()=>learningShowEditor(true));$('#learningEditorClose')?.addEventListener('click',()=>learningShowEditor(false));$('#learningCancel')?.addEventListener('click',()=>learningShowEditor(false));
+    $('#learningSearch')?.addEventListener('input',learningRender);$('#learningCategoryFilter')?.addEventListener('change',learningRender);
+    $('#learningReaderBack')?.addEventListener('click',()=>{$('#learningReader').classList.add('hidden');learningRender();});
+    $('#learningMarkComplete')?.addEventListener('click',()=>{if(!learningCurrentCourseId)return;const progress=learningProgress();if(!progress.includes(learningCurrentCourseId)){progress.push(learningCurrentCourseId);writeLS(LEARNING_PROGRESS_KEY,progress);}toast('Formation terminée','success','Votre progression a été enregistrée sur cet appareil.');$('#learningMarkComplete').disabled=true;$('#learningMarkComplete').textContent='✓ Module terminé';learningRender();});
+    $('#learningCourseForm')?.addEventListener('submit',async e=>{e.preventDefault();const title=$('#learningTitle').value.trim(),description=$('#learningDescription').value.trim(),content=$('#learningContent').value.trim(),url=$('#learningUrl').value.trim(),file=$('#learningAttachment').files?.[0];if(title.length<3||!description||!content){toast('Complétez les champs obligatoires','error');return;}if(url){try{const parsed=new URL(url);if(!['http:','https:'].includes(parsed.protocol))throw new Error();}catch{toast('Le lien externe doit être une URL HTTP(S) valide','error');return;}}let attachment=null;if(file){if(file.size>1024*1024){toast('Le support dépasse 1 Mo','error','Réduisez le fichier avant de l’ajouter.');return;}attachment={name:file.name,type:file.type||'application/octet-stream',data:await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(String(r.result));r.onerror=reject;r.readAsDataURL(file);})};}const course={id:`course_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,title,category:$('#learningCategory').value,level:$('#learningLevel').value,duration:$('#learningDuration').value.trim(),description,content,url,attachment,created_at:new Date().toISOString()};const courses=learningCourses();courses.unshift(course);writeLS(LEARNING_COURSES_KEY,courses);e.target.reset();learningShowEditor(false);learningRender();toast('Formation ajoutée','success','Elle est disponible dans la bibliothèque de cet appareil.');});
+  }
+
   async function init() {
     applySettings();
     bindNavigation();
@@ -781,4 +810,29 @@
     renderReportSummary();
   }
   init();
+})();
+
+
+/* CollectPlus v0.8.2 — persisted theme switch */
+(function initCollectPlusTheme(){
+  const root=document.documentElement;
+  const toggle=document.getElementById('themeToggle');
+  if(!toggle) return;
+  let saved='light';
+  try{saved=localStorage.getItem('collectplus-theme')||'light'}catch(_){}
+  const apply=(theme)=>{
+    root.setAttribute('data-theme',theme);
+    toggle.textContent=theme==='dark'?'☀':'☾';
+    toggle.setAttribute('aria-pressed',String(theme==='dark'));
+    toggle.setAttribute('aria-label',theme==='dark'?'Activer le mode clair':'Activer le mode nuit');
+    toggle.title=theme==='dark'?'Mode clair':'Mode nuit';
+    const meta=document.querySelector('meta[name="theme-color"]');
+    if(meta) meta.setAttribute('content',theme==='dark'?'#0b1220':'#176b5b');
+  };
+  apply(saved==='dark'?'dark':'light');
+  toggle.addEventListener('click',()=>{
+    const next=root.getAttribute('data-theme')==='dark'?'light':'dark';
+    apply(next);
+    try{localStorage.setItem('collectplus-theme',next)}catch(_){}
+  });
 })();
