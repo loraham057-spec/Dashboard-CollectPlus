@@ -52,6 +52,15 @@ Image.new('RGB',(2,2),(40,120,90)).save(image_buffer,format='JPEG')
 image='data:image/jpeg;base64,'+base64.b64encode(image_buffer.getvalue()).decode()
 valid={'data':{'person_name':'Berly','gps_point':{'latitude':-4.3,'longitude':15.3,'accuracy':5},'site_photo':image,'choice':'A'}}
 status,raw=req(f'/api/public/{token}/submissions','POST',valid,auth=False); assert status==200,(status,raw)
+# Retry-safe sync: same submission ID and same logical payload is acknowledged;
+# reusing that ID for altered data is rejected as a conflict.
+retry_id='retry-safe-test-001'; retry_date='2026-11-09T10:00:00+00:00'
+retry_payload={'person_name':'Retry User','gps_point':{'latitude':-4.3,'longitude':15.3,'accuracy':5},'choice':'A'}
+retry_record={'id':retry_id,'form_id':fid,'data':retry_payload,'submitted_at':retry_date}
+assert req('/api/submissions','POST',retry_record)[0]==200
+assert req('/api/submissions','POST',retry_record)[0]==200
+altered={**retry_record,'data':{**retry_payload,'person_name':'Changed User'}}
+assert req('/api/submissions','POST',altered)[0]==409
 # CSV export neutralizes spreadsheet formulas in user-provided strings.
 formula_data={'data':{'person_name':'=1+1','gps_point':{'latitude':-4.3,'longitude':15.3,'accuracy':5},'choice':'A'}}
 assert req(f'/api/public/{token}/submissions','POST',formula_data,auth=False)[0]==200

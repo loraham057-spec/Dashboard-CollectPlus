@@ -37,7 +37,7 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(
     title="CollectPlus",
-    version="0.8.4",
+    version="0.8.8",
     description="Plateforme de collecte mobile et de visualisation des enquêtes.",
 )
 # Origins are configurable for deployment. Same-origin is the default; add explicit
@@ -680,10 +680,22 @@ def create_submission(submission: SubmissionCreate) -> dict[str, Any]:
                 (sub_id, resolved_form_id, json.dumps(payload, ensure_ascii=False), submitted_at),
             )
         except sqlite3.IntegrityError:
-            # Retry-safe offline synchronization: an already uploaded UUID is an acknowledgement.
-            row = conn.execute("SELECT id FROM submissions WHERE id = ?", (sub_id,)).fetchone()
+            # Idempotent offline synchronization: acknowledge only an exact logical retry.
+            # Reusing an identifier for another form or payload is a conflict, not success.
+            row = conn.execute(
+                "SELECT form_id, payload_json, submitted_at FROM submissions WHERE id = ?",
+                (sub_id,),
+            ).fetchone()
             if row is None:
                 raise HTTPException(status_code=409, detail="Impossible d’enregistrer cette soumission.")
+            try:
+                stored_payload = json.loads(row["payload_json"])
+            except (TypeError, json.JSONDecodeError):
+                stored_payload = None
+            if (int(row["form_id"]) != int(resolved_form_id)
+                    or stored_payload != payload
+                    or row["submitted_at"] != submitted_at):
+                raise HTTPException(status_code=409, detail="Cet identifiant de soumission existe déjà avec un contenu différent.")
     return {"ok": True, "id": sub_id, "submitted_at": submitted_at}
 
 

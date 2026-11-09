@@ -182,15 +182,31 @@
     let rows = Array.isArray(state.submissions) ? state.submissions : [];
     if (formFilter !== 'all' && /^\d+$/.test(formFilter)) rows = rows.filter(row => String(row.form_id) === String(formFilter));
     const search = ($('#cpQuestionSearch')?.value || '').trim().toLowerCase();
-    const fields = [];
-    const seen = new Set();
+    const formsById = new Map((Array.isArray(state.forms) ? state.forms : []).map(form => [String(form.id), form]));
+    const labelsByName = new Map();
+    rows.forEach(row => {
+      const form = formsById.get(String(row.form_id));
+      (Array.isArray(form?.sections) ? form.sections : []).forEach(section =>
+        (Array.isArray(section.questions) ? section.questions : []).forEach(question => {
+          if (!question || typeof question.name !== 'string') return;
+          const label = typeof question.label === 'string' && question.label.trim() ? question.label.trim() : question.name;
+          if (!labelsByName.has(question.name)) labelsByName.set(question.name, new Set());
+          labelsByName.get(question.name).add(label);
+        })
+      );
+    });
+    const fields = [], seen = new Set();
     rows.forEach(row => {
       const payload = row.data && typeof row.data === 'object' ? row.data : {};
-      Object.keys(payload).forEach(key => {
-        if (!seen.has(key)) { seen.add(key); fields.push(key); }
+      Object.keys(payload).forEach(name => {
+        if (seen.has(name)) return;
+        seen.add(name);
+        const labels = [...(labelsByName.get(name) || [])];
+        const label = labels.length === 1 ? labels[0] : labels.length > 1 ? `${name} — ${labels.join(' / ')}` : name;
+        fields.push({name, label});
       });
     });
-    const filteredFields = search ? fields.filter(key => key.toLowerCase().includes(search)) : fields;
+    const filteredFields = search ? fields.filter(field => field.name.toLowerCase().includes(search) || field.label.toLowerCase().includes(search)) : fields;
     return {rows, fields: filteredFields};
   }
   function cpCellValue(value) {
@@ -204,7 +220,7 @@
     const head=$('#cpQuestionTableHead'), body=$('#cpQuestionTableBody'), meta=$('#cpQuestionTableMeta');
     if(!head||!body||!meta)return;
     const {rows,fields}=cpQuestionTableRows();
-    const columns=['ID soumission','Date de soumission','Formulaire',...fields];
+    const columns=['ID soumission','Date de soumission','Formulaire',...fields.map(field=>field.label)];
     head.innerHTML=`<tr>${columns.map(label=>`<th scope="col" title="${escapeHtml(label)}">${escapeHtml(label)}</th>`).join('')}</tr>`;
     if(!rows.length){
       body.innerHTML=`<tr><td class="cp-question-empty" colspan="${Math.max(1,columns.length)}">Aucune réponse disponible pour ce filtre.</td></tr>`;
@@ -214,19 +230,19 @@
     const displayRows=rows.slice().sort((a,b)=>String(b.submitted_at||'').localeCompare(String(a.submitted_at||''))).slice(0,500);
     body.innerHTML=displayRows.map(row=>{
       const payload=row.data&&typeof row.data==='object'?row.data:{};
-      const values=[row.id||'—',row.submitted_at||'—',row.form_title||'—',...fields.map(key=>cpCellValue(payload[key]))];
+      const values=[row.id||'—',row.submitted_at||'—',row.form_title||'—',...fields.map(field=>cpCellValue(payload[field.name]))];
       return `<tr>${values.map(value=>`<td title="${escapeHtml(value)}">${escapeHtml(value)}</td>`).join('')}</tr>`;
     }).join('');
     meta.textContent=`${displayRows.length.toLocaleString('fr-FR')} / ${rows.length.toLocaleString('fr-FR')} soumission(s) affichée(s) · maximum 500 lignes pour préserver la fluidité`;
   }
   function exportQuestionTableCsv() {
     const {rows,fields}=cpQuestionTableRows();
-    const columns=['id','submitted_at','form_title',...fields];
+    const columns=['ID soumission','Date de soumission','Formulaire',...fields.map(field=>field.label)];
     const quote=value=>`"${String(value??'').replace(/"/g,'""')}"`;
     const lines=[columns.map(quote).join(',')];
     rows.forEach(row=>{
       const data=row.data&&typeof row.data==='object'?row.data:{};
-      lines.push([row.id,row.submitted_at,row.form_title,...fields.map(key=>cpCellValue(data[key]))].map(quote).join(','));
+      lines.push([row.id,row.submitted_at,row.form_title,...fields.map(field=>cpCellValue(data[field.name]))].map(quote).join(','));
     });
     const blob=new Blob(['\ufeff'+lines.join('\r\n')],{type:'text/csv;charset=utf-8'});
     const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='collectplus_donnees_par_question.csv';a.click();URL.revokeObjectURL(url);

@@ -150,3 +150,28 @@ Panel d'analyse avancée affichant tendance journalière, complétude observée,
 ## v0.8.7 — Tableau de données par question
 
 Le dashboard affiche une table des soumissions en colonnes par champ, avec recherche, filtre par formulaire et export CSV. Voir `docs/TABLE_DONNEES_PAR_QUESTION_v0.8.7.md`.
+
+## v0.8.8 — Revue Équipe IA 10 Agents
+
+- Version API harmonisée avec le paquet.
+- Synchronisation idempotente des soumissions renforcée : collision d'identifiant avec payload/formulaire/date différents rejetée en HTTP 409.
+- Test de régression retry identique / collision ajouté.
+- Rapport de revue structuré : `docs/REVUE_10_AGENTS_ET_CORRECTIFS_v0.8.8.md`.
+
+
+## Version 0.8.9 — Libellés lisibles du tableau de réponses
+
+- Le tableau « Données détaillées par question » affiche les libellés de questions tirés du schéma du formulaire, au lieu des noms techniques lorsque le schéma est disponible.
+- La recherche accepte le libellé visible ou le nom technique du champ.
+- L’export CSV reprend les libellés visibles dans ses en-têtes.
+- Suppression d’une affectation en double de l’heure de rafraîchissement du dashboard.
+- Si plusieurs formulaires utilisent un même nom de champ avec des libellés différents, les labels distincts sont indiqués. Une vue analytique normalisée demeure à améliorer.
+
+
+## Version 0.9.0 — Refonte visuelle du tableau de bord
+
+- Recalibrage de la hiérarchie visuelle : titre, filtres, KPI, panels, actions rapides et pied de page.
+- Réorganisation du dashboard en trois colonnes desktop (tendance, carte, soumissions récentes), puis adaptation tablette/mobile.
+- Ajustement des tailles, espacements, ombres, couleurs, bordures et états hover pour se rapprocher du visuel de référence CollectPlus Pro.
+- Aucune donnée fictive, KPI inventé ou carte statique n’a été ajouté. Les métriques et points continuent à dépendre des données du système.
+- Le nombre de KPI demeure 5 dans cette version car les métriques projets, utilisateurs et zones de santé ne sont pas toutes branchées sur un modèle backend fiable.
