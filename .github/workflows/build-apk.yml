@@ -46,14 +46,13 @@ jobs:
         working-directory: android-wrapper
         run: npm install --no-audit --no-fund
 
-      - name: Copier les fichiers web 
+      - name: Copier les fichiers web et le catalogue de formulaires hors ligne
         working-directory: android-wrapper
         run: |
           npm run copy-web
           test -f www/index.html
           test -f www/static/app.js
-          test -f www/static/formkit.js
-          test -f www/static/icons.svg
+          test -f www/static/default-forms.json
 
       - name: Générer le projet Android natif
         working-directory: android-wrapper

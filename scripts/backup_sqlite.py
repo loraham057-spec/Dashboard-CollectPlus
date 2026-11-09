@@ -21,8 +21,7 @@ if not source.exists():
 target_dir.mkdir(parents=True, exist_ok=True)
 stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 target = target_dir / f"collectplus_{stamp}.sqlite3"
-from contextlib import closing
-with closing(sqlite3.connect(source)) as src, closing(sqlite3.connect(target)) as dst:
+with sqlite3.connect(source) as src, sqlite3.connect(target) as dst:
     src.backup(dst)
     result = dst.execute("PRAGMA integrity_check").fetchone()[0]
     if result != "ok":

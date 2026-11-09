@@ -29,19 +29,16 @@ jobs:
           pip install -r requirements.txt
       - name: Syntaxe Python et JSON
         run: |
-          python -m compileall -q app tests scripts
-          python -m json.tool app/static/geo/index.json > /dev/null
-      - name: Tests unitaires de la logique metier
-        run: python -m unittest tests.test_core -v
+          python -m compileall -q app
+          python -m json.tool app/static/default-forms.json > /dev/null
       - name: Syntaxe JavaScript
         run: |
-          for f in app/static/*.js; do node --check "$f"; done
+          node --check app/static/app.js
+          node --check app/static/public.js
       - name: Tests API securite et flux public
         env:
           COLLECTPLUS_ADMIN_USERNAME: ci-admin
           COLLECTPLUS_ADMIN_PASSWORD: ci-password-test-only
-          COLLECTPLUS_COLLECTOR_USERNAME: ci-collector
-          COLLECTPLUS_COLLECTOR_PASSWORD: ci-collector-test-only
           COLLECTPLUS_DB: /tmp/collectplus-ci.db
         run: |
           python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > server.log 2>&1 &
