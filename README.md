@@ -101,3 +101,27 @@ Les comptes, invitations, rôles et permissions v0.8.0 ci-dessus sont une interf
 - `node --check app/static/app.js` : réussi.
 - `python -m py_compile app/main.py` : réussi.
 - Le wrapper Capacitor et workflow GitHub Actions APK existants ont été conservés ; aucune compilation APK signée sur appareil n'a été exécutée dans cette livraison.
+
+## Changements v0.8.1 — E-learning (bibliothèque locale)
+
+- Ajout d'un onglet **Formation e-learning** dans la navigation, avec identité visuelle cohérente avec CollectPlus.
+- Création de modules avec titre, catégorie, niveau, durée, description/objectifs, leçon texte, lien vidéo/ressource externe et pièce jointe de support (limite 1 Mo).
+- Recherche par mots-clés et filtre par catégorie.
+- Lecteur de module et bouton « Marquer comme terminé » ; progression suivie localement.
+- Les contenus pédagogiques et la progression sont conservés dans le localStorage de ce navigateur. Ils ne sont pas partagés/synchronisés entre utilisateurs ou appareils dans cette livraison. La fonctionnalité d'upload de fichier stocke une data URL localement; éviter les fichiers confidentiels.
+- Le lien vers une ressource externe accepte uniquement les URL HTTP(S) et ouvre dans un nouvel onglet avec `noopener noreferrer`.
+
+### Tests exécutés v0.8.1
+
+- Syntaxe Python (`py_compile`) : PASS.
+- Syntaxe JavaScript (`node --check`) : PASS.
+- Tests API smoke de sécurité du projet : PASS (auth admin, security headers, schéma/validation, GPS/photo, import XLSForm, QR, mitigation formule CSV/XLSX, limite upload, throttling, suppression de formulaire et révocation de lien).
+- Vérifications statiques e-learning : PASS (navigation, formulaire de création, lecteur, persistance progression, recherche/catégorie, plafond fichier, liens externes sécurisés).
+- Limite : les tests de l'e-learning sont des vérifications statiques, pas un test end-to-end via navigateur automatisé. Le module n'est pas encore branché à une base serveur ou à des comptes multi-utilisateurs.
+
+
+## CollectPlus v0.8.2 — amélioration du thème visuel
+- Ajout d'un bouton mode nuit / mode clair dans la barre supérieure.
+- Préférence conservée localement dans le navigateur (`collectplus-theme`).
+- Adaptation de plusieurs composants au thème sombre (navigation, cartes, champs, tableaux, modal).
+- Le choix du thème est indépendant des données et ne modifie pas les soumissions.
